@@ -37,9 +37,9 @@ jobs:
           cd $GITHUB_WORKSPACE/src
           chmod +x gradlew
           ./gradlew make makePluginsJson
-          mkdir $GITHUB_WORKSPACE/builds
+          mkdir -p $GITHUB_WORKSPACE/builds
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds
-          cp build/plugins.json $GIHUB_WORKSPACE/builds
+          cp build/plugins.json $GITHUB_WORKSPACE/builds
 
       - name: Deploy to builds branch
         uses: peaceiris/actions-gh-pages@v4
