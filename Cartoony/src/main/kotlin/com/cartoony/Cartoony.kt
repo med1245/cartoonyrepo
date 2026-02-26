@@ -33,16 +33,12 @@ class Cartoony : MainAPI() {
         val url = "$mainUrl/?s=$encoded"
         val doc = app.get(url, headers = reqHeaders).document
 
-        val candidates = doc.select("a[href], article a, .post a, .entry-title a, h2 a, h3 a")
+        // Cartoony uses /watch/{id} for content pages
+        val candidates = doc.select("a[href*=/watch/]")
         val results = candidates.mapNotNull { a ->
             val href = a.attr("href")?.trim() ?: return@mapNotNull null
             if (href.isNullOrEmpty()) return@mapNotNull null
-
-            // Filter obvious non-content links
-            val isLikelyContent =
-                href.startsWith("/") || href.startsWith(mainUrl) && !href.contains("#") &&
-                !href.contains("/tag/") && !href.contains("/category/") && !href.contains("/page/")
-            if (!isLikelyContent) return@mapNotNull null
+            if (!href.contains("/watch/")) return@mapNotNull null
 
             val title = (a.attr("title")?.trim().orEmpty())
                 .ifBlank { a.text()?.trim().orEmpty() }
@@ -59,18 +55,14 @@ class Cartoony : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page <= 1) mainUrl else "$mainUrl/page/$page/"
         val doc = app.get(url, headers = reqHeaders).document
-        val items = doc.select("a[href], article a, .post a, .entry-title a, h2 a, h3 a")
+        val items = doc.select("a[href*=/watch/]")
             .mapNotNull { a ->
                 val href = a.attr("href")?.trim() ?: return@mapNotNull null
+                if (!href.contains("/watch/")) return@mapNotNull null
                 val title = (a.attr("title")?.trim().orEmpty())
                     .ifBlank { a.text()?.trim().orEmpty() }
                     .ifBlank { a.selectFirst("img")?.attr("alt")?.trim().orEmpty() }
                     .ifBlank { return@mapNotNull null }
-                val isLikelyContent =
-                    (href.startsWith("/") || href.startsWith(mainUrl)) &&
-                    !href.contains("#") && !href.contains("/tag/") &&
-                    !href.contains("/category/") && !href.contains("/page/")
-                if (!isLikelyContent) return@mapNotNull null
                 val absolute = if (href.startsWith("http")) href else "$mainUrl${if (href.startsWith('/')) "" else "/"}$href"
                 newAnimeSearchResponse(title, absolute) { }
             }.distinctBy { it.url }
