@@ -17,12 +17,19 @@ class Cartoony : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val encoded = URLEncoder.encode(query.trim(), "UTF-8")
         val url = "$mainUrl/?s=$encoded"
-        val doc = app.get(url).document
+        val doc = app.get(
+            url,
+            headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
+                "Accept-Language" to "ar,en-US;q=0.9,en;q=0.8",
+                "Referer" to mainUrl
+            )
+        ).document
 
         // Collect candidate links and filter to likely titles
-        val candidates = doc.select("a[href]")
+        val candidates = doc.select("a[href], article a, .post a, .entry-title a")
         val results = candidates.mapNotNull { a ->
-            val href = a.attr("href").trim()
+            val href = a.attr("href")?.trim() ?: return@mapNotNull null
             if (href.isNullOrEmpty()) return@mapNotNull null
 
             val isContent =
@@ -35,9 +42,9 @@ class Cartoony : MainAPI() {
 
             if (!isContent) return@mapNotNull null
 
-            val title = a.attr("title")
-                .ifBlank { a.text().trim() }
-                .ifBlank { a.selectFirst("img")?.attr("alt") ?: "" }
+            val title = (a.attr("title")?.trim().orEmpty())
+                .ifBlank { a.text()?.trim().orEmpty() }
+                .ifBlank { a.selectFirst("img")?.attr("alt")?.trim().orEmpty() }
                 .ifBlank { return@mapNotNull null }
 
             val absolute = if (href.startsWith("http")) href else "$mainUrl${if (href.startsWith('/')) "" else "/"}$href"
