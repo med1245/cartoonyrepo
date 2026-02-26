@@ -38,24 +38,16 @@ class Cartoony : MainAPI() {
             val href = a.attr("href")?.trim() ?: return@mapNotNull null
             if (href.isNullOrEmpty()) return@mapNotNull null
 
-            val isContent =
-                href.contains("/watch", ignoreCase = true) ||
-                href.contains("/series", ignoreCase = true) ||
-                href.contains("/movie", ignoreCase = true) ||
-                href.contains("/cartoon", ignoreCase = true) ||
-                href.contains("%d9%85%d8%b3%d9%84%d8%b3%d9%84", ignoreCase = true) || // مسلسل
-                href.contains("%d9%81%d9%8a%d9%84%d9%85", ignoreCase = true)         // فيلم
-
-            if (!isContent) return@mapNotNull null
+            // Filter obvious non-content links
+            val isLikelyContent =
+                href.startsWith("/") || href.startsWith(mainUrl) && !href.contains("#") &&
+                !href.contains("/tag/") && !href.contains("/category/") && !href.contains("/page/")
+            if (!isLikelyContent) return@mapNotNull null
 
             val title = (a.attr("title")?.trim().orEmpty())
                 .ifBlank { a.text()?.trim().orEmpty() }
                 .ifBlank { a.selectFirst("img")?.attr("alt")?.trim().orEmpty() }
                 .ifBlank { return@mapNotNull null }
-
-            val q = query.trim().lowercase()
-            val t = title.lowercase()
-            if (!t.contains(q)) return@mapNotNull null
 
             val absolute = if (href.startsWith("http")) href else "$mainUrl${if (href.startsWith('/')) "" else "/"}$href"
             newAnimeSearchResponse(title, absolute) { }
@@ -74,14 +66,11 @@ class Cartoony : MainAPI() {
                     .ifBlank { a.text()?.trim().orEmpty() }
                     .ifBlank { a.selectFirst("img")?.attr("alt")?.trim().orEmpty() }
                     .ifBlank { return@mapNotNull null }
-                val isContent =
-                    href.contains("/watch", ignoreCase = true) ||
-                    href.contains("/series", ignoreCase = true) ||
-                    href.contains("/movie", ignoreCase = true) ||
-                    href.contains("/cartoon", ignoreCase = true) ||
-                    href.contains("%d9%85%d8%b3%d9%84%d8%b3%d9%84", ignoreCase = true) ||
-                    href.contains("%d9%81%d9%8a%d9%84%d9%85", ignoreCase = true)
-                if (!isContent) return@mapNotNull null
+                val isLikelyContent =
+                    (href.startsWith("/") || href.startsWith(mainUrl)) &&
+                    !href.contains("#") && !href.contains("/tag/") &&
+                    !href.contains("/category/") && !href.contains("/page/")
+                if (!isLikelyContent) return@mapNotNull null
                 val absolute = if (href.startsWith("http")) href else "$mainUrl${if (href.startsWith('/')) "" else "/"}$href"
                 newAnimeSearchResponse(title, absolute) { }
             }.distinctBy { it.url }
