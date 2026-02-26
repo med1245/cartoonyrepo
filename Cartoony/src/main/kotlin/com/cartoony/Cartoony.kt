@@ -3,6 +3,10 @@ package com.cartoony
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.SearchResponse
+import com.lagradost.cloudstream3.HomePageResponse
+import com.lagradost.cloudstream3.MainPageRequest
+import com.lagradost.cloudstream3.mainPageOf
+import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.newAnimeSearchResponse
 import com.lagradost.cloudstream3.app
 import java.net.URLEncoder
@@ -10,24 +14,26 @@ import java.net.URLEncoder
 class Cartoony : MainAPI() {
     override var mainUrl = "https://cartoony.net"
     override var name = "Cartoony"
-    override val hasMainPage = false
+    override val hasMainPage = true
     override var lang = "ar"
     override val supportedTypes = setOf(TvType.Anime, TvType.TvSeries)
+
+    private val reqHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
+        "Accept-Language" to "ar,en-US;q=0.9,en;q=0.8",
+        "Referer" to "https://cartoony.net/"
+    )
+
+    override val mainPage = mainPageOf(
+        Pair("latest", "Latest")
+    )
 
     override suspend fun search(query: String): List<SearchResponse> {
         val encoded = URLEncoder.encode(query.trim(), "UTF-8")
         val url = "$mainUrl/?s=$encoded"
-        val doc = app.get(
-            url,
-            headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
-                "Accept-Language" to "ar,en-US;q=0.9,en;q=0.8",
-                "Referer" to mainUrl
-            )
-        ).document
+        val doc = app.get(url, headers = reqHeaders).document
 
-        // Collect candidate links and filter to likely titles
-        val candidates = doc.select("a[href], article a, .post a, .entry-title a")
+        val candidates = doc.select("a[href], article a, .post a, .entry-title a, h2 a, h3 a")
         val results = candidates.mapNotNull { a ->
             val href = a.attr("href")?.trim() ?: return@mapNotNull null
             if (href.isNullOrEmpty()) return@mapNotNull null
@@ -47,11 +53,39 @@ class Cartoony : MainAPI() {
                 .ifBlank { a.selectFirst("img")?.attr("alt")?.trim().orEmpty() }
                 .ifBlank { return@mapNotNull null }
 
+            val q = query.trim().lowercase()
+            val t = title.lowercase()
+            if (!t.contains(q)) return@mapNotNull null
+
             val absolute = if (href.startsWith("http")) href else "$mainUrl${if (href.startsWith('/')) "" else "/"}$href"
             newAnimeSearchResponse(title, absolute) { }
         }.distinctBy { it.url }
 
         return results
+    }
+
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val url = if (page <= 1) mainUrl else "$mainUrl/page/$page/"
+        val doc = app.get(url, headers = reqHeaders).document
+        val items = doc.select("a[href], article a, .post a, .entry-title a, h2 a, h3 a")
+            .mapNotNull { a ->
+                val href = a.attr("href")?.trim() ?: return@mapNotNull null
+                val title = (a.attr("title")?.trim().orEmpty())
+                    .ifBlank { a.text()?.trim().orEmpty() }
+                    .ifBlank { a.selectFirst("img")?.attr("alt")?.trim().orEmpty() }
+                    .ifBlank { return@mapNotNull null }
+                val isContent =
+                    href.contains("/watch", ignoreCase = true) ||
+                    href.contains("/series", ignoreCase = true) ||
+                    href.contains("/movie", ignoreCase = true) ||
+                    href.contains("/cartoon", ignoreCase = true) ||
+                    href.contains("%d9%85%d8%b3%d9%84%d8%b3%d9%84", ignoreCase = true) ||
+                    href.contains("%d9%81%d9%8a%d9%84%d9%85", ignoreCase = true)
+                if (!isContent) return@mapNotNull null
+                val absolute = if (href.startsWith("http")) href else "$mainUrl${if (href.startsWith('/')) "" else "/"}$href"
+                newAnimeSearchResponse(title, absolute) { }
+            }.distinctBy { it.url }
+        return newHomePageResponse(request.name, items)
     }
 }
 
