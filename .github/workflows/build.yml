@@ -40,6 +40,25 @@ jobs:
           mkdir -p $GITHUB_WORKSPACE/builds
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds
           cp build/plugins.json $GITHUB_WORKSPACE/builds
+          sudo apt-get update && sudo apt-get install -y jq
+
+          # Create versioned cs3 filenames per plugin and rewrite URLs in plugins.json
+          PLUGINS_JSON="$GITHUB_WORKSPACE/builds/plugins.json"
+          TMP_JSON="$GITHUB_WORKSPACE/builds/plugins.tmp.json"
+          while IFS= read -r row; do
+            NAME=$(echo "$row" | jq -r '.internalName')
+            VER=$(echo "$row" | jq -r '.version')
+            SRC="$GITHUB_WORKSPACE/builds/${NAME}.cs3"
+            DST="$GITHUB_WORKSPACE/builds/${NAME}-v${VER}.cs3"
+            if [ -f "$SRC" ]; then
+              cp "$SRC" "$DST"
+            fi
+          done < <(jq -c '.[]' "$PLUGINS_JSON")
+
+          jq --arg repo "$GITHUB_REPOSITORY" \
+            'map(.url = "https://raw.githubusercontent.com/\($repo)/builds/" + .internalName + "-v" + (.version|tostring) + ".cs3")' \
+            "$PLUGINS_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$PLUGINS_JSON"
+
           SHORT_SHA=${GITHUB_SHA:0:8}
           cp build/plugins.json $GITHUB_WORKSPACE/builds/plugins-${SHORT_SHA}.json
           cat > $GITHUB_WORKSPACE/builds/repo.json <<EOF

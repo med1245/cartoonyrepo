@@ -11,6 +11,7 @@ import com.lagradost.cloudstream3.newAnimeSearchResponse
 import com.lagradost.cloudstream3.app
 import java.net.URLEncoder
 import kotlin.math.min
+import android.util.Log
 
 class Cartoony : MainAPI() {
     override var mainUrl = "https://cartoony.net"
@@ -64,14 +65,20 @@ class Cartoony : MainAPI() {
                 .ifBlank { return@mapNotNull null }
 
             val absolute = if (href.startsWith("http")) href else "$mainUrl${if (href.startsWith('/')) "" else "/"}$href"
-            newAnimeSearchResponse(title, absolute) { }
+            val img = a.selectFirst("img")?.attr("src")?.trim()?.let { if (it.startsWith("http")) it else "$mainUrl${if (it.startsWith('/')) "" else "/"}$it" }
+            newAnimeSearchResponse(title, absolute) {
+                this.posterUrl = img
+            }
         }.distinctBy { it.url }
+
+        Log.d("Cartoony", "search '$query' dom=${candidates.size} results=${results.size}")
 
         // Fallback: if nothing parsed (likely CF/JS page), use text proxy
         if (results.isEmpty()) {
             val proxyUrl = "https://r.jina.ai/http://cartoony.net/?s=$encoded"
             val proxyText = app.get(proxyUrl, headers = reqHeaders).text
             val proxied = parseProxyMarkdown(proxyText)
+            Log.d("Cartoony", "search fallback '$query' results=${proxied.size}")
             if (proxied.isNotEmpty()) return proxied
         }
         return results
@@ -81,7 +88,8 @@ class Cartoony : MainAPI() {
         val url = if (page <= 1) mainUrl else "$mainUrl/page/$page/"
         val res = app.get(url, headers = reqHeaders)
         val doc = res.document
-        val items = doc.select("a[href*=/watch/]")
+        val anchors = doc.select("a[href*=/watch/]")
+        val items = anchors
             .mapNotNull { a ->
                 val href = a.attr("href")?.trim() ?: return@mapNotNull null
                 if (!href.contains("/watch/")) return@mapNotNull null
@@ -90,14 +98,19 @@ class Cartoony : MainAPI() {
                     .ifBlank { a.selectFirst("img")?.attr("alt")?.trim().orEmpty() }
                     .ifBlank { return@mapNotNull null }
                 val absolute = if (href.startsWith("http")) href else "$mainUrl${if (href.startsWith('/')) "" else "/"}$href"
-                newAnimeSearchResponse(title, absolute) { }
+                val img = a.selectFirst("img")?.attr("src")?.trim()?.let { if (it.startsWith("http")) it else "$mainUrl${if (it.startsWith('/')) "" else "/"}$it" }
+                newAnimeSearchResponse(title, absolute) {
+                    this.posterUrl = img
+                }
             }.distinctBy { it.url }
+        Log.d("Cartoony", "home page=$page anchors=${anchors.size} items=${items.size}")
         if (items.isNotEmpty()) return newHomePageResponse(request.name, items)
 
         // Fallback via proxy if empty
         val proxyUrl = if (page <= 1) "https://r.jina.ai/http://cartoony.net/" else "https://r.jina.ai/http://cartoony.net/page/$page/"
         val proxyText = app.get(proxyUrl, headers = reqHeaders).text
         val proxied = parseProxyMarkdown(proxyText)
+        Log.d("Cartoony", "home fallback page=$page items=${proxied.size}")
         return newHomePageResponse(request.name, proxied)
     }
 }
