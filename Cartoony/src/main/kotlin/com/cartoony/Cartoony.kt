@@ -1,4 +1,4 @@
-@file:Suppress("DEPRECATION")
+@file:Suppress("DEPRECATION", "DEPRECATION_ERROR")
 
 package com.cartoony
 
@@ -311,7 +311,6 @@ class Cartoony : MainAPI() {
         val link = obj.optString("link").trim()
         if (link.isBlank()) return false
 
-        @Suppress("DEPRECATION")
         callback(
             ExtractorLink(
                 source = name,
