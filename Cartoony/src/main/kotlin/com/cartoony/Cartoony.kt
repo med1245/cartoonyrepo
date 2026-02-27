@@ -184,7 +184,7 @@ class Cartoony : MainAPI() {
     }
 
     private fun buildSearchFromShow(show: ShowItem): SearchResponse {
-        val url = if (show.isMovie) "$mainUrl/movie/${show.id}" else "$mainUrl/series/${show.id}"
+        val url = if (show.isMovie) "$watchDomain/movie/${show.id}" else "$watchDomain/series/${show.id}"
         return newAnimeSearchResponse(show.title, url, if (show.isMovie) TvType.Movie else TvType.TvSeries) {
             this.posterUrl = show.poster
         }
@@ -362,7 +362,7 @@ class Cartoony : MainAPI() {
                 val show = mergedById[showId]
                 val title = show?.title ?: o.optString("name").ifBlank { o.optString("pref").ifBlank { "غير معنون" } }
                 val poster = show?.poster ?: o.optString("cover_full_path").ifBlank { o.optString("cover") }
-                val url = if (show?.isMovie == true) "$mainUrl/movie/$showId" else "$mainUrl/series/$showId"
+                val url = if (show?.isMovie == true) "$watchDomain/movie/$showId" else "$watchDomain/series/$showId"
 
                 latest.add(
                     newAnimeSearchResponse(title, url, if (show?.isMovie == true) TvType.Movie else TvType.TvSeries) {
@@ -544,7 +544,8 @@ class Cartoony : MainAPI() {
                                     name = "$name Legacy",
                                     url = streamUrl,
                                     referer = "https://cartoony.net/",
-                                    quality = Qualities.Unknown.value
+                                    quality = Qualities.Unknown.value,
+                                    isM3u8 = streamUrl.contains(".m3u8")
                                 )
                             )
                             return true
@@ -560,7 +561,8 @@ class Cartoony : MainAPI() {
                         name = "$name Legacy",
                         url = direct,
                         referer = "https://cartoony.net/",
-                        quality = Qualities.Unknown.value
+                        quality = Qualities.Unknown.value,
+                        isM3u8 = true
                     )
                 )
                 return true
@@ -594,7 +596,8 @@ class Cartoony : MainAPI() {
                             name = name,
                             url = link,
                             referer = "$watchDomain/",
-                            quality = Qualities.Unknown.value
+                            quality = Qualities.Unknown.value,
+                            isM3u8 = link.contains(".m3u8") || link.contains("/hls/") || link.contains("playlist")
                         )
                     )
                     return true
@@ -609,7 +612,8 @@ class Cartoony : MainAPI() {
                             name = "$name Fallback",
                             url = fallback,
                             referer = "$watchDomain/",
-                            quality = Qualities.Unknown.value
+                            quality = Qualities.Unknown.value,
+                            isM3u8 = true
                         )
                     )
                     return true
@@ -629,7 +633,8 @@ class Cartoony : MainAPI() {
                         name = "$name Legacy",
                         url = streamUrl,
                         referer = "$watchDomain/",
-                        quality = Qualities.Unknown.value
+                        quality = Qualities.Unknown.value,
+                        isM3u8 = streamUrl.contains(".m3u8")
                     )
                 )
                 return true
@@ -644,7 +649,8 @@ class Cartoony : MainAPI() {
                 name = "$name Direct",
                 url = direct,
                 referer = "$watchDomain/",
-                quality = Qualities.Unknown.value
+                quality = Qualities.Unknown.value,
+                isM3u8 = true
             )
         )
         return true
