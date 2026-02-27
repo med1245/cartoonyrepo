@@ -9,7 +9,11 @@ import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.newAnimeSearchResponse
+import com.lagradost.cloudstream3.newMovieLoadResponse
+import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.Qualities
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -36,7 +40,12 @@ class Cartoony : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        Pair("latest", "Latest")
+        Pair("latest", "Latest"),
+        Pair("new", "New Uploads"),
+        Pair("popular", "Most Watched"),
+        Pair("top", "Top Rated"),
+        Pair("hot", "Hot"),
+        Pair("zaman", "Old Classics")
     )
 
     private fun hexToBytes(hex: String): ByteArray {
@@ -106,6 +115,36 @@ class Cartoony : MainAPI() {
 
     private fun safeLower(text: String): String = text.lowercase()
 
+    private fun buildShowResponse(obj: JSONObject): SearchResponse? {
+        val id = obj.optInt("id", -1)
+        if (id <= 0) return null
+
+        val title = obj.optString("name").trim()
+            .ifBlank { obj.optString("pref").trim() }
+            .ifBlank { "غير معنون" }
+
+        val poster = obj.optString("cover_full_path").ifBlank { obj.optString("cover") }
+        val url = "$mainUrl/series/$id"
+
+        return newAnimeSearchResponse(title, url) {
+            this.posterUrl = poster
+        }
+    }
+
+    private fun buildSection(items: List<SearchResponse>, name: String): HomePageResponse {
+        return newHomePageResponse(name, items)
+    }
+
+    private fun filterShowsByFlag(arr: JSONArray, flagKey: String): List<SearchResponse> {
+        val items = mutableListOf<SearchResponse>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            if (obj.optInt(flagKey, 0) != 1) continue
+            buildShowResponse(obj)?.let { items.add(it) }
+        }
+        return items
+    }
+
     override suspend fun search(query: String): List<SearchResponse> {
         val q = query.trim()
         if (q.isEmpty()) return emptyList()
@@ -143,36 +182,141 @@ class Cartoony : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val decrypted = apiGetDecrypted("recentEpisodes")
-        if (decrypted == null) {
-            Log.w("Cartoony", "Main page empty: decrypted response null")
-            return newHomePageResponse(request.name, emptyList())
+        val sections = mutableListOf<HomePageResponse>()
+
+        val recentDecrypted = apiGetDecrypted("recentEpisodes")
+        if (recentDecrypted != null) {
+            val recentArr = JSONArray(recentDecrypted)
+            val recentItems = mutableListOf<SearchResponse>()
+            for (i in 0 until recentArr.length()) {
+                val obj = recentArr.optJSONObject(i) ?: continue
+                val id = obj.optInt("id", -1)
+                if (id <= 0) continue
+
+                val title = obj.optString("name").trim()
+                    .ifBlank { obj.optString("pref").trim() }
+                    .ifBlank { obj.optString("slug").trim() }
+                    .ifBlank { "غير معنون" }
+
+                val poster = obj.optString("cover_full_path").ifBlank { obj.optString("cover") }
+                val url = "$mainUrl/watch/$id"
+
+                recentItems.add(
+                    newAnimeSearchResponse(title, url) {
+                        this.posterUrl = poster
+                    }
+                )
+            }
+            if (recentItems.isNotEmpty()) {
+                sections.add(buildSection(recentItems, "Latest"))
+            }
+        } else {
+            Log.w("Cartoony", "Main page empty: decrypted recentEpisodes null")
         }
 
-        val arr = JSONArray(decrypted)
-        val items = mutableListOf<SearchResponse>()
+        val showsDecrypted = apiGetDecrypted("tvshows")
+        if (showsDecrypted != null) {
+            val showsArr = JSONArray(showsDecrypted)
 
-        for (i in 0 until arr.length()) {
-            val obj = arr.optJSONObject(i) ?: continue
-            val id = obj.optInt("id", -1)
-            if (id <= 0) continue
+            val newItems = filterShowsByFlag(showsArr, "is_new")
+            if (newItems.isNotEmpty()) sections.add(buildSection(newItems, "New Uploads"))
 
-            val title = obj.optString("name").trim()
-                .ifBlank { obj.optString("pref").trim() }
-                .ifBlank { obj.optString("slug").trim() }
-                .ifBlank { "غير معنون" }
+            val popularItems = filterShowsByFlag(showsArr, "is_popular")
+            if (popularItems.isNotEmpty()) sections.add(buildSection(popularItems, "Most Watched"))
 
-            val poster = obj.optString("cover_full_path").ifBlank { obj.optString("cover") }
-            val url = "$mainUrl/watch/$id"
+            val topItems = filterShowsByFlag(showsArr, "is_top")
+            if (topItems.isNotEmpty()) sections.add(buildSection(topItems, "Top Rated"))
 
-            items.add(
-                newAnimeSearchResponse(title, url) {
-                    this.posterUrl = poster
-                }
+            val hotItems = filterShowsByFlag(showsArr, "is_hot")
+            if (hotItems.isNotEmpty()) sections.add(buildSection(hotItems, "Hot"))
+
+            val zamanItems = filterShowsByFlag(showsArr, "is_zaman")
+            if (zamanItems.isNotEmpty()) sections.add(buildSection(zamanItems, "Old Classics"))
+        } else {
+            Log.w("Cartoony", "Main page empty: decrypted tvshows null")
+        }
+
+        return HomePageResponse(sections)
+    }
+
+    override suspend fun load(url: String): LoadResponse? {
+        val episodeId = url.substringAfterLast("/").toIntOrNull()
+        if (episodeId != null && url.contains("/watch/")) {
+            return newMovieLoadResponse(
+                name = "Cartoony Episode",
+                url = url,
+                dataUrl = episodeId.toString(),
+                type = TvType.Anime
             )
         }
 
-        Log.d("Cartoony", "home page items=${items.size}")
-        return newHomePageResponse(request.name, items)
+        if (url.contains("/series/")) {
+            val seriesId = url.substringAfterLast("/").toIntOrNull()
+            if (seriesId != null) {
+                return newMovieLoadResponse(
+                    name = "Cartoony Series",
+                    url = url,
+                    dataUrl = "series:$seriesId",
+                    type = TvType.TvSeries
+                )
+            }
+        }
+
+        return null
+    }
+
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (com.lagradost.cloudstream3.SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        var episodeId = data.toIntOrNull()
+
+        if (episodeId == null && data.startsWith("series:")) {
+            val seriesId = data.removePrefix("series:").toIntOrNull()
+            if (seriesId != null) {
+                val recentDecrypted = apiGetDecrypted("recentEpisodes")
+                if (recentDecrypted != null) {
+                    val recentArr = JSONArray(recentDecrypted)
+                    for (i in 0 until recentArr.length()) {
+                        val obj = recentArr.optJSONObject(i) ?: continue
+                        if (obj.optInt("tv_series_id", -1) == seriesId) {
+                            val candidate = obj.optInt("id", -1)
+                            if (candidate > 0) {
+                                episodeId = candidate
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        episodeId ?: return false
+
+        val endpoint = "$apiBase/episode/link"
+        val body = """{"episodeId":$episodeId}"""
+        val res = app.post(
+            url = endpoint,
+            headers = reqHeaders + mapOf("Content-Type" to "application/json"),
+            data = body
+        )
+
+        val decrypted = decryptEnvelope(res.text) ?: return false
+        val obj = JSONObject(decrypted)
+        val link = obj.optString("link").trim()
+        if (link.isBlank()) return false
+
+        callback(
+            ExtractorLink(
+                source = name,
+                name = name,
+                url = link,
+                referer = mainUrl,
+                quality = Qualities.Unknown.value
+            )
+        )
+        return true
     }
 }
