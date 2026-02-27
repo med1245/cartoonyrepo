@@ -22,6 +22,7 @@ import javax.crypto.spec.SecretKeySpec
 
 class Cartoony : MainAPI() {
     override var mainUrl = "https://cartoony.net"
+    private val watchDomain = "https://carateen.tv"
     override var name = "Cartoony"
     override val hasMainPage = true
     override var lang = "ar"
@@ -33,8 +34,9 @@ class Cartoony : MainAPI() {
     private val reqHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
         "Accept-Language" to "ar,en-US;q=0.9,en;q=0.8",
-        "Referer" to "https://cartoony.net/",
-        "Origin" to "https://cartoony.net",
+        // Use watch domain for referer/origin as playback endpoints are tied to it
+        "Referer" to "$watchDomain/",
+        "Origin" to watchDomain,
         "Accept" to "application/json"
     )
 
@@ -574,7 +576,14 @@ class Cartoony : MainAPI() {
 
         // Strategy 1: SP endpoint
         runCatching {
-            app.post(
+            // Try JSON first
+            runCatching {
+                app.post(
+                    url = "$apiBase/episode/link",
+                    headers = reqHeaders + mapOf("Content-Type" to "application/json"),
+                    data = """{"episodeId":$epId}"""
+                )
+            }.getOrNull() ?: app.post(
                 url = "$apiBase/episode/link",
                 headers = reqHeaders + mapOf("Content-Type" to "application/x-www-form-urlencoded"),
                 data = mapOf("episodeId" to epId.toString())
@@ -591,7 +600,7 @@ class Cartoony : MainAPI() {
                             source = name,
                             name = name,
                             url = link,
-                            referer = "https://cartoony.net/",
+                            referer = "$watchDomain/",
                             quality = Qualities.Unknown.value
                         )
                     )
@@ -606,7 +615,7 @@ class Cartoony : MainAPI() {
                             source = name,
                             name = "$name Fallback",
                             url = fallback,
-                            referer = "https://cartoony.net/",
+                            referer = "$watchDomain/",
                             quality = Qualities.Unknown.value
                         )
                     )
@@ -626,7 +635,7 @@ class Cartoony : MainAPI() {
                         source = name,
                         name = "$name Legacy",
                         url = streamUrl,
-                        referer = "https://cartoony.net/",
+                        referer = "$watchDomain/",
                         quality = Qualities.Unknown.value
                     )
                 )
@@ -641,7 +650,7 @@ class Cartoony : MainAPI() {
                 source = name,
                 name = "$name Direct",
                 url = direct,
-                referer = "https://cartoony.net/",
+                referer = "$watchDomain/",
                 quality = Qualities.Unknown.value
             )
         )
