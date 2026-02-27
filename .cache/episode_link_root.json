@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ar">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
+  <title>كرتوني - شاهد مسلسلات الكرتون القديمة والجديدة بجودة عالية وبدون إعلانات</title>
+  <meta name="description" dir="rtl" content="كرتوني هو الموقع الأول في العالم العربي الذي يوفر مشاهدة مجانية لجميع أفلام ومسلسلات الكرتون القديمة والجديدة بجودة عالية ومن دون إعلانات">
+  <meta name="keywords" content="كرتون,أيام زمان,مسلسلات,قديمة,عالية الجودة,سبيستون,Cartoony,Spacetoon,كرتوني">
+  <!-- Facebook Meta Tags -->
+  <meta property="og:url" content="https://cartoony.net">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="كرتوني - شاهد مسلسلات الكرتون القديمة والجديدة بجودة عالية وبدون إعلانات">
+  <meta property="og:description" dir="rtl" content="كرتوني هو الموقع الأول في العالم العربي الذي يوفر مشاهدة مجانية لجميع أفلام ومسلسلات الكرتون القديمة والجديدة بجودة عالية ومن دون إعلانات">
+  <meta property="og:image" content="https://cartoony.net/assets/img/default_cover.webp">
+
+  <!-- Twitter Meta Tags -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta property="twitter:domain" content="cartoony.net">
+  <meta property="twitter:url" content="https://cartoony.net">
+  <meta name="twitter:title" content="كرتوني - شاهد مسلسلات الكرتون القديمة والجديدة بجودة عالية وبدون إعلانات">
+  <meta name="twitter:description" dir="rtl" content="كرتوني هو الموقع الأول في العالم العربي الذي يوفر مشاهدة مجانية لجميع أفلام ومسلسلات الكرتون القديمة والجديدة بجودة عالية ومن دون إعلانات">
+  <meta name="twitter:image" content="https://cartoony.net/assets/img/default_cover.webp">
+
+  <meta name="6a97888e-site-verification" content="c7cb83041eb0e847494940adc7b0be07">
+
+  <!-- DNS prefetching for external domains -->
+  <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+  <link rel="dns-prefetch" href="https://api.yamli.com">
+  <link rel="dns-prefetch" href="https://www.google.com">
+  <link rel="dns-prefetch" href="https://cdn.spacetoongo.com">
+
+  <!-- Preconnect to critical external origins -->
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+
+  <link rel="stylesheet" href="/assets/bootstrap/css/bootstrap.min.css">
+
+  <!-- Load custom CSS after Bootstrap to ensure proper override order -->
+
+  <!-- Preload hero background image -->
+  <link rel="preload" href="/assets/img/hero_images/sky_bg.webp" as="image">
+
+  <!-- Favicon -->
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/img/favicons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/img/favicons/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/img/favicons/favicon-16x16.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="mask-icon" href="/assets/img/favicons/safari-pinned-tab.svg" color="#000000">
+  <meta name="msapplication-TileColor" content="#000000">
+  <meta name="theme-color" content="#000000">
+  <link rel="canonical" href="https://cartoony.net">
+
+  <!-- Preload critical scripts -->
+  <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js" as="script"
+    crossorigin="anonymous">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js" crossorigin="anonymous"
+    defer></script>
+  <script src="https://api.yamli.com/js/yamli_api.js"></script>
+  <script defer>
+    Yamli.init({
+      uiLanguage: "ar",
+      startMode: "onOrUserDefault",
+      popupDirection: "up"
+    });
+  </script>
+  <!-- Add reCAPTCHA script -->
+  <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+  <script type="module" crossorigin src="/assets/index-CE3KgJbC.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/chunk-we8k2NOo.js">
+  <link rel="modulepreload" crossorigin href="/assets/chunk-2CNohbno.js">
+  <link rel="modulepreload" crossorigin href="/assets/chunk-CDKfe1Sd.js">
+  <link rel="modulepreload" crossorigin href="/assets/chunk-BVh8vOtn.js">
+  <link rel="modulepreload" crossorigin href="/assets/chunk-BoQhkJOv.js">
+  <link rel="stylesheet" crossorigin href="/assets/auth-BVnZXoOZ.css">
+  <link rel="stylesheet" crossorigin href="/assets/player-D6dQNIlg.css">
+  <link rel="stylesheet" crossorigin href="/assets/watch-B3cWQfE-.css">
+  <link rel="stylesheet" crossorigin href="/assets/index-CWr1Y33u.css">
+<script id="vite-plugin-pwa:register-sw" src="/registerSW.js"></script></head>
+
+<body>
+  <div id="app">
+  </div>
+  <script src="/assets/bootstrap/js/bootstrap.min.js" defer></script>
+</body>
+
+</html>

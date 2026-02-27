@@ -1,5 +1,6 @@
 package com.cartoony
 
+import android.util.Log
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.SearchResponse
@@ -9,9 +10,12 @@ import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.newAnimeSearchResponse
 import com.lagradost.cloudstream3.app
-import java.net.URLEncoder
-import kotlin.math.min
-import android.util.Log
+import org.json.JSONArray
+import org.json.JSONObject
+
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class Cartoony : MainAPI() {
     override var mainUrl = "https://cartoony.net"
@@ -20,98 +24,155 @@ class Cartoony : MainAPI() {
     override var lang = "ar"
     override val supportedTypes = setOf(TvType.Anime, TvType.TvSeries)
 
+    private val apiBase = "$mainUrl/api/sp"
+    private val apiKey = "7annaba3l_loves_crypto_safe_key!"
+
     private val reqHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
         "Accept-Language" to "ar,en-US;q=0.9,en;q=0.8",
-        "Referer" to "https://cartoony.net/"
+        "Referer" to "https://cartoony.net/",
+        "Origin" to "https://cartoony.net",
+        "Accept" to "application/json"
     )
 
     override val mainPage = mainPageOf(
         Pair("latest", "Latest")
     )
 
-    private fun parseProxyMarkdown(text: String): List<SearchResponse> {
-        // Matches markdown links: [ ...title... ](https://cartoony.net/watch/123)
-        val linkRegex = Regex("""\[[^\]]+]\((https?://cartoony\.net/watch/\d+)\)""")
-        val imgRegex = Regex("""!\[[^\]]*]\([^)]+\)\s*""") // remove leading image tags
-        return linkRegex.findAll(text).mapNotNull { m ->
-            val full = m.value
-            val url = m.groupValues[1]
-            var inside = full.substring(1, full.indexOf(']')) // contents between first [ and ]
-            inside = imgRegex.replace(inside, "").trim()
-            // Heuristic: keep last 40 chars to avoid long badges "24 حلقة ... "
-            val title = inside.split('\n', '•').lastOrNull()?.trim().orEmpty()
-                .takeIf { it.isNotEmpty() } ?: "غير معنون"
-            newAnimeSearchResponse(title, url) { }
-        }.distinctBy { it.url }.toList()
+    private fun hexToBytes(hex: String): ByteArray {
+        val clean = hex.trim()
+        require(clean.length % 2 == 0) { "Invalid hex length: ${clean.length}" }
+        val out = ByteArray(clean.length / 2)
+        var i = 0
+        while (i < clean.length) {
+            out[i / 2] = clean.substring(i, i + 2).toInt(16).toByte()
+            i += 2
+        }
+        return out
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        val encoded = URLEncoder.encode(query.trim(), "UTF-8")
-        val url = "$mainUrl/?s=$encoded"
-        val res = app.get(url, headers = reqHeaders)
-        val doc = res.document
-
-        // Cartoony uses /watch/{id} for content pages
-        val candidates = doc.select("a[href*=/watch/]")
-        val results = candidates.mapNotNull { a ->
-            val href = a.attr("href")?.trim() ?: return@mapNotNull null
-            if (href.isNullOrEmpty()) return@mapNotNull null
-            if (!href.contains("/watch/")) return@mapNotNull null
-
-            val title = (a.attr("title")?.trim().orEmpty())
-                .ifBlank { a.text()?.trim().orEmpty() }
-                .ifBlank { a.selectFirst("img")?.attr("alt")?.trim().orEmpty() }
-                .ifBlank { return@mapNotNull null }
-
-            val absolute = if (href.startsWith("http")) href else "$mainUrl${if (href.startsWith('/')) "" else "/"}$href"
-            val img = a.selectFirst("img")?.attr("src")?.trim()?.let { if (it.startsWith("http")) it else "$mainUrl${if (it.startsWith('/')) "" else "/"}$it" }
-            newAnimeSearchResponse(title, absolute) {
-                this.posterUrl = img
+    private fun decryptPayload(encryptedHex: String, ivHex: String): String? {
+        return try {
+            val keyBytes = apiKey.toByteArray(Charsets.UTF_8)
+            if (keyBytes.size != 32) {
+                Log.w("Cartoony", "Unexpected API key length=${keyBytes.size}")
             }
-        }.distinctBy { it.url }
-
-        Log.d("Cartoony", "search '$query' dom=${candidates.size} results=${results.size}")
-
-        // Fallback: if nothing parsed (likely CF/JS page), use text proxy
-        if (results.isEmpty()) {
-            val proxyUrl = "https://r.jina.ai/http://cartoony.net/?s=$encoded"
-            val proxyText = app.get(proxyUrl, headers = reqHeaders).text
-            val proxied = parseProxyMarkdown(proxyText)
-            Log.d("Cartoony", "search fallback '$query' results=${proxied.size}")
-            if (proxied.isNotEmpty()) return proxied
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                SecretKeySpec(keyBytes, "AES"),
+                IvParameterSpec(hexToBytes(ivHex))
+            )
+            val plain = cipher.doFinal(hexToBytes(encryptedHex))
+            String(plain, Charsets.UTF_8)
+        } catch (t: Throwable) {
+            Log.e("Cartoony", "decryptPayload failed: ${t.message}", t)
+            null
         }
+    }
+
+    private fun decryptEnvelope(raw: String): String? {
+        val trimmed = raw.trim()
+        if (trimmed.startsWith("[")) return trimmed
+        return try {
+            val obj = JSONObject(trimmed)
+            val encrypted = obj.optString("encryptedData")
+            val iv = obj.optString("iv")
+            if (encrypted.isBlank() || iv.isBlank()) {
+                Log.w("Cartoony", "Missing encryptedData/iv in response")
+                return null
+            }
+            decryptPayload(encrypted, iv)
+        } catch (t: Throwable) {
+            Log.e("Cartoony", "decryptEnvelope failed: ${t.message}", t)
+            null
+        }
+    }
+
+    private suspend fun apiGetDecrypted(path: String): String? {
+        val url = "$apiBase/$path"
+        return try {
+            val res = app.get(url, headers = reqHeaders)
+            val decrypted = decryptEnvelope(res.text)
+            if (decrypted == null) {
+                Log.w("Cartoony", "Decryption returned null for $path")
+            }
+            decrypted
+        } catch (t: Throwable) {
+            Log.e("Cartoony", "apiGetDecrypted failed for $path: ${t.message}", t)
+            null
+        }
+    }
+
+    private fun safeLower(text: String): String = text.lowercase()
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+
+        val decrypted = apiGetDecrypted("tvshows") ?: return emptyList()
+        val arr = JSONArray(decrypted)
+
+        val results = mutableListOf<SearchResponse>()
+        val qLower = safeLower(q)
+
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val name = obj.optString("name").trim()
+            val pref = obj.optString("pref").trim()
+            val tags = obj.optString("tags").trim()
+            val hay = safeLower(listOf(name, pref, tags).joinToString(" "))
+            if (!hay.contains(qLower)) continue
+
+            val id = obj.optInt("id", -1)
+            if (id <= 0) continue
+
+            val title = name.ifBlank { pref }.ifBlank { "غير معنون" }
+            val poster = obj.optString("cover_full_path").ifBlank { obj.optString("cover") }
+            val url = "$mainUrl/series/$id"
+
+            results.add(
+                newAnimeSearchResponse(title, url) {
+                    this.posterUrl = poster
+                }
+            )
+        }
+
+        Log.d("Cartoony", "search '$query' results=${results.size}")
         return results
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page <= 1) mainUrl else "$mainUrl/page/$page/"
-        val res = app.get(url, headers = reqHeaders)
-        val doc = res.document
-        val anchors = doc.select("a[href*=/watch/]")
-        val items = anchors
-            .mapNotNull { a ->
-                val href = a.attr("href")?.trim() ?: return@mapNotNull null
-                if (!href.contains("/watch/")) return@mapNotNull null
-                val title = (a.attr("title")?.trim().orEmpty())
-                    .ifBlank { a.text()?.trim().orEmpty() }
-                    .ifBlank { a.selectFirst("img")?.attr("alt")?.trim().orEmpty() }
-                    .ifBlank { return@mapNotNull null }
-                val absolute = if (href.startsWith("http")) href else "$mainUrl${if (href.startsWith('/')) "" else "/"}$href"
-                val img = a.selectFirst("img")?.attr("src")?.trim()?.let { if (it.startsWith("http")) it else "$mainUrl${if (it.startsWith('/')) "" else "/"}$it" }
-                newAnimeSearchResponse(title, absolute) {
-                    this.posterUrl = img
-                }
-            }.distinctBy { it.url }
-        Log.d("Cartoony", "home page=$page anchors=${anchors.size} items=${items.size}")
-        if (items.isNotEmpty()) return newHomePageResponse(request.name, items)
+        val decrypted = apiGetDecrypted("recentEpisodes")
+        if (decrypted == null) {
+            Log.w("Cartoony", "Main page empty: decrypted response null")
+            return newHomePageResponse(request.name, emptyList())
+        }
 
-        // Fallback via proxy if empty
-        val proxyUrl = if (page <= 1) "https://r.jina.ai/http://cartoony.net/" else "https://r.jina.ai/http://cartoony.net/page/$page/"
-        val proxyText = app.get(proxyUrl, headers = reqHeaders).text
-        val proxied = parseProxyMarkdown(proxyText)
-        Log.d("Cartoony", "home fallback page=$page items=${proxied.size}")
-        return newHomePageResponse(request.name, proxied)
+        val arr = JSONArray(decrypted)
+        val items = mutableListOf<SearchResponse>()
+
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val id = obj.optInt("id", -1)
+            if (id <= 0) continue
+
+            val title = obj.optString("name").trim()
+                .ifBlank { obj.optString("pref").trim() }
+                .ifBlank { obj.optString("slug").trim() }
+                .ifBlank { "غير معنون" }
+
+            val poster = obj.optString("cover_full_path").ifBlank { obj.optString("cover") }
+            val url = "$mainUrl/watch/$id"
+
+            items.add(
+                newAnimeSearchResponse(title, url) {
+                    this.posterUrl = poster
+                }
+            )
+        }
+
+        Log.d("Cartoony", "home page items=${items.size}")
+        return newHomePageResponse(request.name, items)
     }
 }
-
