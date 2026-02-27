@@ -4,12 +4,12 @@ dependencies {
 }
 
 // Use an integer for version numbers
-version = 7
+version = 8
 
 cloudstream {
     // All of these properties are optional, you can safely remove any of them.
 
-    description = "Arabic cartoons and anime from cartoony.net"
+    description = "Arabic cartoons, anime, series, and movies from cartoony.net"
     authors = listOf("Mehdi Marsaman")
 
     /**
@@ -21,7 +21,7 @@ cloudstream {
     **/
     status = 1 // Will be 3 if unspecified
 
-    tvTypes = listOf("TvSeries", "Anime")
+    tvTypes = listOf("TvSeries", "Anime", "Movie")
 
     requiresResources = true
     language = "ar"
