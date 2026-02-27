@@ -10,6 +10,7 @@ import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.newAnimeSearchResponse
 import com.lagradost.cloudstream3.app
 import java.net.URLEncoder
+import kotlin.math.min
 
 class Cartoony : MainAPI() {
     override var mainUrl = "https://cartoony.net"
@@ -28,10 +29,27 @@ class Cartoony : MainAPI() {
         Pair("latest", "Latest")
     )
 
+    private fun parseProxyMarkdown(text: String): List<SearchResponse> {
+        // Matches markdown links: [ ...title... ](https://cartoony.net/watch/123)
+        val linkRegex = Regex("""\[[^\]]+]\((https?://cartoony\.net/watch/\d+)\)""")
+        val imgRegex = Regex("""!\[[^\]]*]\([^)]+\)\s*""") // remove leading image tags
+        return linkRegex.findAll(text).mapNotNull { m ->
+            val full = m.value
+            val url = m.groupValues[1]
+            var inside = full.substring(1, full.indexOf(']')) // contents between first [ and ]
+            inside = imgRegex.replace(inside, "").trim()
+            // Heuristic: keep last 40 chars to avoid long badges "24 حلقة ... "
+            val title = inside.split('\n', '•').lastOrNull()?.trim().orEmpty()
+                .takeIf { it.isNotEmpty() } ?: "غير معنون"
+            newAnimeSearchResponse(title, url) { }
+        }.distinctBy { it.url }.toList()
+    }
+
     override suspend fun search(query: String): List<SearchResponse> {
         val encoded = URLEncoder.encode(query.trim(), "UTF-8")
         val url = "$mainUrl/?s=$encoded"
-        val doc = app.get(url, headers = reqHeaders).document
+        val res = app.get(url, headers = reqHeaders)
+        val doc = res.document
 
         // Cartoony uses /watch/{id} for content pages
         val candidates = doc.select("a[href*=/watch/]")
@@ -49,12 +67,20 @@ class Cartoony : MainAPI() {
             newAnimeSearchResponse(title, absolute) { }
         }.distinctBy { it.url }
 
+        // Fallback: if nothing parsed (likely CF/JS page), use text proxy
+        if (results.isEmpty()) {
+            val proxyUrl = "https://r.jina.ai/http://cartoony.net/?s=$encoded"
+            val proxyText = app.get(proxyUrl, headers = reqHeaders).text
+            val proxied = parseProxyMarkdown(proxyText)
+            if (proxied.isNotEmpty()) return proxied
+        }
         return results
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page <= 1) mainUrl else "$mainUrl/page/$page/"
-        val doc = app.get(url, headers = reqHeaders).document
+        val res = app.get(url, headers = reqHeaders)
+        val doc = res.document
         val items = doc.select("a[href*=/watch/]")
             .mapNotNull { a ->
                 val href = a.attr("href")?.trim() ?: return@mapNotNull null
@@ -66,7 +92,13 @@ class Cartoony : MainAPI() {
                 val absolute = if (href.startsWith("http")) href else "$mainUrl${if (href.startsWith('/')) "" else "/"}$href"
                 newAnimeSearchResponse(title, absolute) { }
             }.distinctBy { it.url }
-        return newHomePageResponse(request.name, items)
+        if (items.isNotEmpty()) return newHomePageResponse(request.name, items)
+
+        // Fallback via proxy if empty
+        val proxyUrl = if (page <= 1) "https://r.jina.ai/http://cartoony.net/" else "https://r.jina.ai/http://cartoony.net/page/$page/"
+        val proxyText = app.get(proxyUrl, headers = reqHeaders).text
+        val proxied = parseProxyMarkdown(proxyText)
+        return newHomePageResponse(request.name, proxied)
     }
 }
 
