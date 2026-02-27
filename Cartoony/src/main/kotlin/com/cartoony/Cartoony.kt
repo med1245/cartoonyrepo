@@ -311,11 +311,11 @@ class Cartoony : MainAPI() {
 
         callback(
             newExtractorLink(
-                source = name,
-                name = name,
-                url = link,
-                referer = mainUrl,
-                quality = Qualities.Unknown.value
+                name,
+                name,
+                link,
+                mainUrl,
+                Qualities.Unknown.value
             )
         )
         return true
