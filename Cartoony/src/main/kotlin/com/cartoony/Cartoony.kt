@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.SearchResponse
 import com.lagradost.cloudstream3.HomePageResponse
+import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.newHomePageResponse
@@ -14,6 +15,7 @@ import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -131,8 +133,8 @@ class Cartoony : MainAPI() {
         }
     }
 
-    private fun buildSection(items: List<SearchResponse>, name: String): HomePageResponse {
-        return newHomePageResponse(name, items)
+    private fun buildSection(items: List<SearchResponse>, name: String): HomePageList {
+        return HomePageList(name, items)
     }
 
     private fun filterShowsByFlag(arr: JSONArray, flagKey: String): List<SearchResponse> {
@@ -182,7 +184,7 @@ class Cartoony : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val sections = mutableListOf<HomePageResponse>()
+        val sections = mutableListOf<HomePageList>()
 
         val recentDecrypted = apiGetDecrypted("recentEpisodes")
         if (recentDecrypted != null) {
@@ -236,7 +238,7 @@ class Cartoony : MainAPI() {
             Log.w("Cartoony", "Main page empty: decrypted tvshows null")
         }
 
-        return HomePageResponse(sections)
+        return newHomePageResponse(sections)
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -296,11 +298,10 @@ class Cartoony : MainAPI() {
         episodeId ?: return false
 
         val endpoint = "$apiBase/episode/link"
-        val body = """{"episodeId":$episodeId}"""
         val res = app.post(
             url = endpoint,
             headers = reqHeaders + mapOf("Content-Type" to "application/json"),
-            data = body
+            data = mapOf("episodeId" to episodeId.toString())
         )
 
         val decrypted = decryptEnvelope(res.text) ?: return false
@@ -309,7 +310,7 @@ class Cartoony : MainAPI() {
         if (link.isBlank()) return false
 
         callback(
-            ExtractorLink(
+            newExtractorLink(
                 source = name,
                 name = name,
                 url = link,
