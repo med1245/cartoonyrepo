@@ -14,7 +14,6 @@ import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 
 import org.json.JSONArray
@@ -317,8 +316,7 @@ class Cartoony : MainAPI() {
                 name = name,
                 url = link,
                 referer = mainUrl,
-                quality = Qualities.Unknown.value,
-                type = ExtractorLinkType.M3U8
+                quality = Qualities.Unknown.value
             )
         )
         return true
