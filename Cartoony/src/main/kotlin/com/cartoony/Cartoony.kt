@@ -75,6 +75,13 @@ class Cartoony : MainAPI() {
         val videoId: String?
     )
 
+    @Volatile
+    private var cachedShows: List<ShowItem>? = null
+
+    @Volatile
+    private var cachedShowsAt: Long = 0L
+    private val showCacheTtlMs = 5 * 60 * 1000L
+
     private fun parseTags(raw: String?): List<String> {
         if (raw.isNullOrBlank()) return emptyList()
         return raw.split(",", "،")
@@ -256,6 +263,12 @@ class Cartoony : MainAPI() {
     }
 
     private suspend fun getMergedShows(): List<ShowItem> {
+        val now = System.currentTimeMillis()
+        val cached = cachedShows
+        if (cached != null && (now - cachedShowsAt) < showCacheTtlMs) {
+            return cached
+        }
+
         val sp = getSpShows()
         val legacy = getLegacyShows()
 
@@ -281,7 +294,11 @@ class Cartoony : MainAPI() {
                 )
             }
         }
-        return merged.values.toList()
+
+        val result = merged.values.toList()
+        cachedShows = result
+        cachedShowsAt = now
+        return result
     }
 
     private suspend fun getLegacyEpisodes(showId: Int): List<LegacyEpisode> {
@@ -511,21 +528,24 @@ class Cartoony : MainAPI() {
             val payload = data.removePrefix("legacyVideo:")
             val videoId = payload.substringBefore("|")
             if (videoId.isNotBlank()) {
-                val legacyTxt = apiLegacyGetDecrypted("episode?episodeId=${payload.substringAfter("|")}")
-                if (legacyTxt != null) {
-                    val obj = JSONObject(legacyTxt)
-                    val streamUrl = obj.optString("streamUrl").trim()
-                    if (streamUrl.startsWith("http")) {
-                        callback(
-                            ExtractorLink(
-                                source = name,
-                                name = "$name Legacy",
-                                url = streamUrl,
-                                referer = "https://cartoony.net/",
-                                quality = Qualities.Unknown.value
+                val episodeIdPart = payload.substringAfter("|", "")
+                if (episodeIdPart.isNotBlank()) {
+                    val legacyTxt = apiLegacyGetDecrypted("episode?episodeId=$episodeIdPart")
+                    if (legacyTxt != null) {
+                        val obj = JSONObject(legacyTxt)
+                        val streamUrl = obj.optString("streamUrl").trim()
+                        if (streamUrl.startsWith("http")) {
+                            callback(
+                                ExtractorLink(
+                                    source = name,
+                                    name = "$name Legacy",
+                                    url = streamUrl,
+                                    referer = "https://cartoony.net/",
+                                    quality = Qualities.Unknown.value
+                                )
                             )
-                        )
-                        return true
+                            return true
+                        }
                     }
                 }
 
@@ -562,17 +582,35 @@ class Cartoony : MainAPI() {
         if (!obj.optBoolean("success", true)) return false
 
         val link = obj.optString("link").trim()
-        if (link.isBlank()) return false
-
-        callback(
-            ExtractorLink(
-                source = name,
-                name = name,
-                url = link,
-                referer = "https://cartoony.net/",
-                quality = Qualities.Unknown.value
+        if (link.isNotBlank()) {
+            callback(
+                ExtractorLink(
+                    source = name,
+                    name = name,
+                    url = link,
+                    referer = "https://cartoony.net/",
+                    quality = Qualities.Unknown.value
+                )
             )
-        )
-        return true
+            return true
+        }
+
+        // SP hard fallback by CDN private id if available
+        val cdnPrivate = obj.optString("cdn_stream_private_id").trim()
+        if (cdnPrivate.isNotBlank()) {
+            val fallback = "https://vod.spacetoongo.com/asset/$cdnPrivate/play_video/index.m3u8"
+            callback(
+                ExtractorLink(
+                    source = name,
+                    name = "$name Fallback",
+                    url = fallback,
+                    referer = "https://cartoony.net/",
+                    quality = Qualities.Unknown.value
+                )
+            )
+            return true
+        }
+
+        return false
     }
 }

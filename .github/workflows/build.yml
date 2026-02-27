@@ -12,7 +12,7 @@ on:
       - master
       - main
     paths-ignore:
-      - '*.md'
+      - "*.md"
 
 jobs:
   build:
@@ -27,16 +27,30 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: 17
-          distribution: 'temurin'
+          distribution: "temurin"
+          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Cache Android SDK components
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/.android
+            /usr/local/lib/android/sdk/cmdline-tools
+            /usr/local/lib/android/sdk/platforms
+            /usr/local/lib/android/sdk/build-tools
+            /usr/local/lib/android/sdk/platform-tools
+          key: ${{ runner.os }}-android-sdk-${{ hashFiles('src/.github/workflows/build.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-android-sdk-
 
       - name: Build Plugins and prepare artifacts
         run: |
           cd $GITHUB_WORKSPACE/src
           chmod +x gradlew
-          ./gradlew make makePluginsJson
+          ./gradlew --build-cache make makePluginsJson
           mkdir -p $GITHUB_WORKSPACE/builds
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds
           cp build/plugins.json $GITHUB_WORKSPACE/builds
@@ -79,6 +93,6 @@ jobs:
           publish_branch: builds
           publish_dir: builds
           force_orphan: true
-          user_name: 'github-actions[bot]'
-          user_email: 'github-actions[bot]@users.noreply.github.com'
+          user_name: "github-actions[bot]"
+          user_email: "github-actions[bot]@users.noreply.github.com"
           commit_message: Build ${{ github.sha }}
