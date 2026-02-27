@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.cartoony
 
 import android.util.Log
