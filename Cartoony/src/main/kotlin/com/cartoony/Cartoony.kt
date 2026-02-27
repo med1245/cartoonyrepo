@@ -576,14 +576,7 @@ class Cartoony : MainAPI() {
 
         // Strategy 1: SP endpoint
         runCatching {
-            // Try JSON first
-            runCatching {
-                app.post(
-                    url = "$apiBase/episode/link",
-                    headers = reqHeaders + mapOf("Content-Type" to "application/json"),
-                    data = """{"episodeId":$epId}"""
-                )
-            }.getOrNull() ?: app.post(
+            app.post(
                 url = "$apiBase/episode/link",
                 headers = reqHeaders + mapOf("Content-Type" to "application/x-www-form-urlencoded"),
                 data = mapOf("episodeId" to epId.toString())
