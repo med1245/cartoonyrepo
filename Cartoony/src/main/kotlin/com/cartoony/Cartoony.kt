@@ -14,8 +14,9 @@ import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.newExtractorLink
+
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -310,12 +311,12 @@ class Cartoony : MainAPI() {
         if (link.isBlank()) return false
 
         callback(
-            newExtractorLink(
-                name,
-                name,
-                link,
-                mainUrl,
-                Qualities.Unknown.value
+            ExtractorLink(
+                source = name,
+                name = name,
+                url = link,
+                referer = mainUrl,
+                quality = Qualities.Unknown.value
             )
         )
         return true
