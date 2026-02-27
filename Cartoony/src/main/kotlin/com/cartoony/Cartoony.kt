@@ -269,6 +269,7 @@ class Cartoony : MainAPI() {
             return cached
         }
 
+        // Fast path: load SP first and return immediately if legacy fails/slow later in call chain
         val sp = getSpShows()
         val legacy = getLegacyShows()
 
@@ -571,46 +572,79 @@ class Cartoony : MainAPI() {
             else -> data.toIntOrNull()
         } ?: return false
 
-        val res = app.post(
-            url = "$apiBase/episode/link",
-            headers = reqHeaders + mapOf("Content-Type" to "application/x-www-form-urlencoded"),
-            data = mapOf("episodeId" to epId.toString())
+        // Strategy 1: SP endpoint
+        runCatching {
+            app.post(
+                url = "$apiBase/episode/link",
+                headers = reqHeaders + mapOf("Content-Type" to "application/x-www-form-urlencoded"),
+                data = mapOf("episodeId" to epId.toString())
+            )
+        }.getOrNull()?.let { res ->
+            val decrypted = decryptEnvelope(res.text)
+            if (!decrypted.isNullOrBlank()) {
+                val obj = JSONObject(decrypted)
+
+                val link = obj.optString("link").trim()
+                if (link.isNotBlank()) {
+                    callback(
+                        ExtractorLink(
+                            source = name,
+                            name = name,
+                            url = link,
+                            referer = "https://cartoony.net/",
+                            quality = Qualities.Unknown.value
+                        )
+                    )
+                    return true
+                }
+
+                val cdnPrivate = obj.optString("cdn_stream_private_id").trim()
+                if (cdnPrivate.isNotBlank()) {
+                    val fallback = "https://vod.spacetoongo.com/asset/$cdnPrivate/play_video/index.m3u8"
+                    callback(
+                        ExtractorLink(
+                            source = name,
+                            name = "$name Fallback",
+                            url = fallback,
+                            referer = "https://cartoony.net/",
+                            quality = Qualities.Unknown.value
+                        )
+                    )
+                    return true
+                }
+            }
+        }
+
+        // Strategy 2: legacy endpoint by numeric episode id
+        val legacyTxt = apiLegacyGetDecrypted("episode?episodeId=$epId")
+        if (!legacyTxt.isNullOrBlank()) {
+            val obj = JSONObject(legacyTxt)
+            val streamUrl = obj.optString("streamUrl").trim()
+            if (streamUrl.startsWith("http")) {
+                callback(
+                    ExtractorLink(
+                        source = name,
+                        name = "$name Legacy",
+                        url = streamUrl,
+                        referer = "https://cartoony.net/",
+                        quality = Qualities.Unknown.value
+                    )
+                )
+                return true
+            }
+        }
+
+        // Strategy 3: direct HLS pattern fallback
+        val direct = "https://pegasus.5387692.xyz/api/hls/$epId/playlist.m3u8"
+        callback(
+            ExtractorLink(
+                source = name,
+                name = "$name Direct",
+                url = direct,
+                referer = "https://cartoony.net/",
+                quality = Qualities.Unknown.value
+            )
         )
-
-        val decrypted = decryptEnvelope(res.text) ?: return false
-        val obj = JSONObject(decrypted)
-        if (!obj.optBoolean("success", true)) return false
-
-        val link = obj.optString("link").trim()
-        if (link.isNotBlank()) {
-            callback(
-                ExtractorLink(
-                    source = name,
-                    name = name,
-                    url = link,
-                    referer = "https://cartoony.net/",
-                    quality = Qualities.Unknown.value
-                )
-            )
-            return true
-        }
-
-        // SP hard fallback by CDN private id if available
-        val cdnPrivate = obj.optString("cdn_stream_private_id").trim()
-        if (cdnPrivate.isNotBlank()) {
-            val fallback = "https://vod.spacetoongo.com/asset/$cdnPrivate/play_video/index.m3u8"
-            callback(
-                ExtractorLink(
-                    source = name,
-                    name = "$name Fallback",
-                    url = fallback,
-                    referer = "https://cartoony.net/",
-                    quality = Qualities.Unknown.value
-                )
-            )
-            return true
-        }
-
-        return false
+        return true
     }
 }
