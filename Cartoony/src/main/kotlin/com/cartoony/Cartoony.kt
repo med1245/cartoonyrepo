@@ -409,7 +409,7 @@ class Cartoony : MainAPI() {
             return newMovieLoadResponse(
                 name = "Cartoony Episode",
                 url = url,
-                dataUrl = "spEpisode:$id",
+                dataUrl = "spEpisode:$id|$id",
                 type = TvType.Anime
             )
         }
@@ -423,7 +423,7 @@ class Cartoony : MainAPI() {
                 return newMovieLoadResponse(
                     name = show?.title ?: first.title,
                     url = url,
-                    dataUrl = "legacyVideo:${first.videoId ?: ""}|${first.id}",
+                    dataUrl = "legacyVideo:${first.videoId ?: ""}|${first.id}|$id",
                     type = TvType.Movie
                 ) {
                     this.posterUrl = show?.poster ?: first.thumbnail
@@ -447,7 +447,7 @@ class Cartoony : MainAPI() {
                 name = show?.title ?: firstSp.optString("name")
                     .ifBlank { firstSp.optString("pref").ifBlank { "Cartoony Movie" } },
                 url = url,
-                dataUrl = "spEpisode:$epId",
+                dataUrl = "spEpisode:$epId|$id",
                 type = TvType.Movie
             ) {
                 this.posterUrl =
@@ -466,7 +466,7 @@ class Cartoony : MainAPI() {
             val legacyEpisodes = getLegacyEpisodes(id)
             if (legacyEpisodes.isNotEmpty()) {
                 val eps = legacyEpisodes.mapIndexed { idx, ep ->
-                    newEpisode("legacyVideo:${ep.videoId ?: ""}|${ep.id}") {
+                    newEpisode("legacyVideo:${ep.videoId ?: ""}|${ep.id}|${id}") {
                         this.name = ep.title
                         this.episode = ep.orderId ?: (idx + 1)
                         this.posterUrl = ep.thumbnail ?: show?.poster
@@ -500,7 +500,7 @@ class Cartoony : MainAPI() {
                     .ifBlank { "Episode ${epObj.optInt("number", i + 1)}" }
                 val epNum = epObj.optInt("number", i + 1)
                 eps.add(
-                    newEpisode("spEpisode:$epId") {
+                    newEpisode("spEpisode:$epId|$id") {
                         this.name = epName
                         this.episode = epNum
                         this.posterUrl = epObj.optString("cover_full_path").ifBlank { epObj.optString("cover") }
@@ -538,9 +538,11 @@ class Cartoony : MainAPI() {
             val payload = data.removePrefix("legacyVideo:")
             val videoId = payload.substringBefore("|")
             if (videoId.isNotBlank()) {
-                val episodeIdPart = payload.substringAfter("|", "")
+                val episodeIdPart = payload.substringAfter("|", "").substringBefore("|")
+                val showIdPart = payload.substringAfterLast("|", "")
                 if (episodeIdPart.isNotBlank()) {
-                    val legacyTxt = apiLegacyGetDecrypted("episode?episodeId=$episodeIdPart")
+                    val showQuery = if (showIdPart.isNotBlank() && showIdPart != episodeIdPart) "&showId=$showIdPart" else ""
+                    val legacyTxt = apiLegacyGetDecrypted("episode?episodeId=$episodeIdPart$showQuery")
                     if (legacyTxt != null) {
                         val obj = try { JSONObject(legacyTxt) } catch (e: Exception) { null }
                         if (obj != null) {
@@ -579,11 +581,26 @@ class Cartoony : MainAPI() {
         }
 
         // SP playback
-        val epId = when {
-            data.startsWith("spEpisode:") -> data.removePrefix("spEpisode:").toIntOrNull()
-            data.startsWith("episode:") -> data.removePrefix("episode:").toIntOrNull()
-            else -> data.toIntOrNull()
-        } ?: return false
+        var epIdStr = ""
+        var showIdStr = ""
+        when {
+            data.startsWith("spEpisode:") -> {
+                val d = data.removePrefix("spEpisode:")
+                epIdStr = d.substringBefore("|")
+                showIdStr = d.substringAfter("|", "")
+            }
+            data.startsWith("episode:") -> {
+                val d = data.removePrefix("episode:")
+                epIdStr = d.substringBefore("|")
+                showIdStr = d.substringAfter("|", "")
+            }
+            else -> {
+                epIdStr = data.substringBefore("|")
+                showIdStr = data.substringAfter("|", "")
+            }
+        }
+        val epId = epIdStr.toIntOrNull() ?: return false
+        val showId = showIdStr.toIntOrNull()
 
         // Strategy 1: SP endpoint
         val bases = listOf(mainUrl, watchDomain)
@@ -596,7 +613,10 @@ class Cartoony : MainAPI() {
                 app.post(
                     url = "$base/api/sp/episode/link",
                     headers = overrides + mapOf("Content-Type" to "application/x-www-form-urlencoded"),
-                    data = mapOf("episodeId" to epId.toString())
+                    data = mutableMapOf<String, String>().apply {
+                        put("episodeId", epId.toString())
+                        if (showId != null) put("showId", showId.toString())
+                    }
                 )
             }.getOrNull()?.let { res ->
                 val decrypted = decryptEnvelope(res.text)
@@ -639,7 +659,8 @@ class Cartoony : MainAPI() {
         }
 
         // Strategy 2: legacy endpoint by numeric episode id
-        val legacyTxt = apiLegacyGetDecrypted("episode?episodeId=$epId")
+        val showQuery = if (showId != null) "&showId=$showId" else ""
+        val legacyTxt = apiLegacyGetDecrypted("episode?episodeId=$epId$showQuery")
         if (!legacyTxt.isNullOrBlank()) {
             val obj = try { JSONObject(legacyTxt) } catch (e: Exception) { null }
             if (obj != null) {
