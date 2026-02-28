@@ -148,13 +148,16 @@ class Cartoony : MainAPI() {
 
     private fun decryptEnvelope(raw: String): String? {
         val trimmed = raw.trim()
-        if (trimmed.startsWith("[") || trimmed.startsWith("{\"streamUrl\"")) return trimmed
+        if (trimmed.startsWith("[")) return trimmed
         return try {
             val obj = JSONObject(trimmed)
-            val encrypted = obj.optString("encryptedData")
-            val iv = obj.optString("iv")
-            if (encrypted.isBlank() || iv.isBlank()) return null
-            decryptPayload(encrypted, iv)
+            val encrypted = obj.optString("encryptedData", "")
+            val iv = obj.optString("iv", "")
+            if (encrypted.isNotBlank() && iv.isNotBlank()) {
+                decryptPayload(encrypted, iv)
+            } else {
+                trimmed // Pass-through unencrypted/decrypted JSON objects
+            }
         } catch (t: Throwable) {
             Log.e("Cartoony", "decryptEnvelope failed: ${t.message}", t)
             null
@@ -186,12 +189,16 @@ class Cartoony : MainAPI() {
         return fetchApiWithFallback(path, isLegacy = false)
     }
 
+    private fun getUrlForShow(show: ShowItem): String {
+        return if (show.fromLegacy) "$mainUrl/watch/${show.id}" else "$mainUrl/watch/sp/${show.id}"
+    }
+
     private suspend fun apiLegacyGetDecrypted(path: String): String? {
         return fetchApiWithFallback(path, isLegacy = true)
     }
 
     private fun buildSearchFromShow(show: ShowItem): SearchResponse {
-        val url = if (show.isMovie) "$mainUrl/movie/${show.id}" else "$mainUrl/series/${show.id}"
+        val url = getUrlForShow(show)
         return newAnimeSearchResponse(show.title, url, if (show.isMovie) TvType.Movie else TvType.TvSeries) {
             this.posterUrl = show.poster
         }
@@ -369,7 +376,7 @@ class Cartoony : MainAPI() {
                 val show = mergedById[showId]
                 val title = show?.title ?: o.optString("name").ifBlank { o.optString("pref").ifBlank { "غير معنون" } }
                 val poster = show?.poster ?: o.optString("cover_full_path").ifBlank { o.optString("cover") }
-                val url = if (show?.isMovie == true) "$mainUrl/movie/$showId" else "$mainUrl/series/$showId"
+                val url = if (show != null) getUrlForShow(show) else "$mainUrl/watch/sp/$showId"
 
                 latest.add(
                     newAnimeSearchResponse(title, url, if (show?.isMovie == true) TvType.Movie else TvType.TvSeries) {
@@ -404,8 +411,9 @@ class Cartoony : MainAPI() {
         val id = url.substringAfterLast("/").toIntOrNull() ?: return null
         val show = getMergedShows().firstOrNull { it.id == id }
 
-        // Direct episode deep-link (only if it's an explicit episode path or we can't find the show)
-        if ((url.contains("/watch/sp/") || url.contains("/watch/legacy/")) || (url.contains("/watch/") && show == null)) {
+        // Direct episode deep-link parsing (differentiate from whole series /watch/ id)
+        val isDeepLink = url.substringAfter("/watch/", "").split("/").filter { it.isNotBlank() }.size > 1
+        if (isDeepLink || (url.contains("/watch/") && show == null)) {
             return newMovieLoadResponse(
                 name = "Cartoony Episode",
                 url = url,
@@ -415,7 +423,7 @@ class Cartoony : MainAPI() {
         }
 
         // Movie path
-        if (url.contains("/movie/") || show?.isMovie == true) {
+        if (show?.isMovie == true || url.contains("/movie/")) {
             // legacy first for full catalog, fallback to sp
             val legacyEpisodes = getLegacyEpisodes(id)
             if (legacyEpisodes.isNotEmpty()) {
@@ -462,7 +470,7 @@ class Cartoony : MainAPI() {
         }
 
         // Series path
-        if (url.contains("/series/") || url.contains("/watch/") || show?.isMovie == false) {
+        if (show?.isMovie == false || url.contains("/watch/")) {
             val legacyEpisodes = getLegacyEpisodes(id)
             if (legacyEpisodes.isNotEmpty()) {
                 val eps = legacyEpisodes.mapIndexed { idx, ep ->
@@ -533,16 +541,16 @@ class Cartoony : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Legacy playback by video_id
+        // Legacy playback
         if (data.startsWith("legacyVideo:")) {
             val payload = data.removePrefix("legacyVideo:")
             val videoId = payload.substringBefore("|")
-            if (videoId.isNotBlank()) {
-                val episodeIdPart = payload.substringAfter("|", "").substringBefore("|")
-                val showIdPart = payload.substringAfterLast("|", "")
-                if (episodeIdPart.isNotBlank()) {
-                    val showQuery = if (showIdPart.isNotBlank() && showIdPart != episodeIdPart) "&showId=$showIdPart" else ""
-                    val legacyTxt = apiLegacyGetDecrypted("episode?episodeId=$episodeIdPart$showQuery")
+            val episodeIdPart = payload.substringAfter("|", "").substringBefore("|")
+            val showIdPart = payload.substringAfterLast("|", "")
+            
+            if (episodeIdPart.isNotBlank()) {
+                val showQuery = if (showIdPart.isNotBlank() && showIdPart != episodeIdPart) "&showId=$showIdPart" else ""
+                val legacyTxt = apiLegacyGetDecrypted("episode?episodeId=$episodeIdPart$showQuery")
                     if (legacyTxt != null) {
                         val obj = try { JSONObject(legacyTxt) } catch (e: Exception) { null }
                         if (obj != null) {
@@ -565,19 +573,20 @@ class Cartoony : MainAPI() {
                 }
 
                 // direct by video id fallback
-                val direct = "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8"
-                callback(
-                    ExtractorLink(
-                        source = name,
-                        name = "$name Legacy",
-                        url = direct,
-                        referer = "https://cartoony.net/",
-                        quality = Qualities.Unknown.value,
-                        isM3u8 = true
+                if (videoId.isNotBlank()) {
+                    val direct = "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8"
+                    callback(
+                        ExtractorLink(
+                            source = name,
+                            name = "$name Legacy",
+                            url = direct,
+                            referer = "https://cartoony.net/",
+                            quality = Qualities.Unknown.value,
+                            isM3u8 = true
+                        )
                     )
-                )
-                return true
-            }
+                    return true
+                }
         }
 
         // SP playback
