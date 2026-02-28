@@ -190,7 +190,8 @@ class Cartoony : MainAPI() {
     }
 
     private fun getUrlForShow(show: ShowItem): String {
-        return if (show.fromLegacy) "$mainUrl/watch/${show.id}" else "$mainUrl/watch/sp/${show.id}"
+        val base = if (show.fromLegacy) "$mainUrl/watch/${show.id}" else "$mainUrl/watch/sp/${show.id}"
+        return if (show.isMovie) "$base?type=movie" else "$base?type=series"
     }
 
     private suspend fun apiLegacyGetDecrypted(path: String): String? {
@@ -408,22 +409,40 @@ class Cartoony : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val id = url.substringAfterLast("/").toIntOrNull() ?: return null
+        val urlWithoutQuery = url.substringBefore("?")
+        val watchParts = urlWithoutQuery.substringAfter("/watch/", "").split("/").filter { it.isNotBlank() }
+        
+        // Parse showId and episodeId (if any)
+        val showIdStr: String?
+        val episodeIdStr: String?
+        if (watchParts.isNotEmpty() && watchParts[0] == "sp") {
+            showIdStr = watchParts.getOrNull(1)
+            episodeIdStr = watchParts.getOrNull(2)
+        } else if (watchParts.isNotEmpty()) {
+            showIdStr = watchParts.getOrNull(0)
+            episodeIdStr = watchParts.getOrNull(1)
+        } else {
+            showIdStr = urlWithoutQuery.substringAfterLast("/")
+            episodeIdStr = null
+        }
+        
+        val id = showIdStr?.toIntOrNull() ?: return null
         val show = getMergedShows().firstOrNull { it.id == id }
+        val isMovie = show?.isMovie == true || url.contains("type=movie") || url.contains("/movie/")
 
-        // Direct episode deep-link parsing (differentiate from whole series /watch/ id)
-        val isDeepLink = url.substringAfter("/watch/", "").split("/").filter { it.isNotBlank() }.size > 1
-        if (isDeepLink || (url.contains("/watch/") && show == null)) {
+        // If an episode deep link was pasted (e.g. watch/sp/1017/32293)
+        if (episodeIdStr != null && episodeIdStr.toIntOrNull() != null) {
+            val epId = episodeIdStr.toInt()
             return newMovieLoadResponse(
                 name = "Cartoony Episode",
                 url = url,
-                dataUrl = "spEpisode:$id|$id",
+                dataUrl = "spEpisode:$epId|$id",
                 type = TvType.Anime
             )
         }
 
         // Movie path
-        if (show?.isMovie == true || url.contains("/movie/")) {
+        if (isMovie) {
             // legacy first for full catalog, fallback to sp
             val legacyEpisodes = getLegacyEpisodes(id)
             if (legacyEpisodes.isNotEmpty()) {
@@ -470,7 +489,7 @@ class Cartoony : MainAPI() {
         }
 
         // Series path
-        if (show?.isMovie == false || url.contains("/watch/")) {
+        if (!isMovie) {
             val legacyEpisodes = getLegacyEpisodes(id)
             if (legacyEpisodes.isNotEmpty()) {
                 val eps = legacyEpisodes.mapIndexed { idx, ep ->
