@@ -611,22 +611,15 @@ class Cartoony : MainAPI() {
         // SP playback
         var epIdStr = ""
         var showIdStr = ""
-        when {
-            data.startsWith("spEpisode:") -> {
-                val d = data.removePrefix("spEpisode:")
-                epIdStr = d.substringBefore("|")
-                showIdStr = d.substringAfter("|", "")
-            }
-            data.startsWith("episode:") -> {
-                val d = data.removePrefix("episode:")
-                epIdStr = d.substringBefore("|")
-                showIdStr = d.substringAfter("|", "")
-            }
-            else -> {
-                epIdStr = data.substringBefore("|")
-                showIdStr = data.substringAfter("|", "")
-            }
+        val payload = when {
+            data.startsWith("spEpisode:") -> data.removePrefix("spEpisode:")
+            data.startsWith("episode:") -> data.removePrefix("episode:")
+            else -> data
         }
+        val spParts = payload.split("|")
+        epIdStr = spParts.getOrNull(0)?.trim() ?: ""
+        showIdStr = spParts.getOrNull(1)?.trim() ?: ""
+        
         val epId = epIdStr.toIntOrNull() ?: return false
         val showId = showIdStr.toIntOrNull()
 
@@ -640,7 +633,7 @@ class Cartoony : MainAPI() {
                 
                 app.post(
                     url = "$base/api/sp/episode/link",
-                    headers = overrides + mapOf("Content-Type" to "application/x-www-form-urlencoded"),
+                    headers = overrides,
                     data = mutableMapOf<String, String>().apply {
                         put("episodeId", epId.toString())
                         if (showId != null) put("showId", showId.toString())
