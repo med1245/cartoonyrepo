@@ -28,13 +28,11 @@ class Cartoony : MainAPI() {
     override var lang = "ar"
     override val supportedTypes = setOf(TvType.Anime, TvType.TvSeries, TvType.Movie)
 
-    private val apiBase = "$mainUrl/api/sp"
     private val apiKey = "7annaba3l_loves_crypto_safe_key!"
 
     private val reqHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
         "Accept-Language" to "ar,en-US;q=0.9,en;q=0.8",
-        // Use watch domain for referer/origin as playback endpoints are tied to it
         "Referer" to "$watchDomain/",
         "Origin" to watchDomain,
         "Accept" to "application/json"
@@ -77,19 +75,13 @@ class Cartoony : MainAPI() {
         val videoId: String?
     )
 
-    @Volatile
-    private var cachedShows: List<ShowItem>? = null
-
-    @Volatile
-    private var cachedShowsAt: Long = 0L
+    @Volatile private var cachedShows: List<ShowItem>? = null
+    @Volatile private var cachedShowsAt: Long = 0L
     private val showCacheTtlMs = 5 * 60 * 1000L
 
     private fun parseTags(raw: String?): List<String> {
         if (raw.isNullOrBlank()) return emptyList()
-        return raw.split(",", "،")
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .distinct()
+        return raw.split(",", "،").map { it.trim() }.filter { it.isNotBlank() }.distinct()
     }
 
     private fun parseYearFromCreatedAt(createdAt: String?): Int? {
@@ -109,12 +101,7 @@ class Cartoony : MainAPI() {
     }
 
     private fun normalizeTitle(s: String): String {
-        return s.lowercase()
-            .replace('|', ' ')
-            .replace('-', ' ')
-            .replace('–', ' ')
-            .replace("  ", " ")
-            .trim()
+        return s.lowercase().replace('|', ' ').replace('-', ' ').replace('–', ' ').replace("  ", " ").trim()
     }
 
     private fun hexToBytes(hex: String): ByteArray {
@@ -133,15 +120,10 @@ class Cartoony : MainAPI() {
         return try {
             val keyBytes = apiKey.toByteArray(Charsets.UTF_8)
             val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-            cipher.init(
-                Cipher.DECRYPT_MODE,
-                SecretKeySpec(keyBytes, "AES"),
-                IvParameterSpec(hexToBytes(ivHex))
-            )
-            val plain = cipher.doFinal(hexToBytes(encryptedHex))
-            String(plain, Charsets.UTF_8)
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), IvParameterSpec(hexToBytes(ivHex)))
+            String(cipher.doFinal(hexToBytes(encryptedHex)), Charsets.UTF_8)
         } catch (t: Throwable) {
-            Log.e("Cartoony", "decryptPayload failed: ${t.message}", t)
+            Log.e("Cartoony", "decryptPayload failed: ${t.message}")
             null
         }
     }
@@ -151,42 +133,41 @@ class Cartoony : MainAPI() {
         if (trimmed.startsWith("[")) return trimmed
         return try {
             val obj = JSONObject(trimmed)
-            val encrypted = obj.optString("encryptedData", "")
-            val iv = obj.optString("iv", "")
-            if (encrypted.isNotBlank() && iv.isNotBlank()) {
-                decryptPayload(encrypted, iv)
-            } else {
-                trimmed // Pass-through unencrypted/decrypted JSON objects
-            }
+            val enc = obj.optString("encryptedData", "")
+            val iv  = obj.optString("iv", "")
+            if (enc.isNotBlank() && iv.isNotBlank()) decryptPayload(enc, iv) else trimmed
         } catch (t: Throwable) {
-            Log.e("Cartoony", "decryptEnvelope failed: ${t.message}", t)
+            Log.e("Cartoony", "decryptEnvelope failed: ${t.message}")
             null
         }
     }
 
-    private suspend fun fetchApiWithFallback(path: String, isLegacy: Boolean): String? {
-        val bases = listOf(mainUrl, watchDomain)
-        for (base in bases) {
-            val endpoint = if (isLegacy) "$base/api/$path" else "$base/api/sp/$path"
-            try {
-                val overrides = reqHeaders.toMutableMap()
-                overrides["Origin"] = base
-                overrides["Referer"] = "$base/"
-                
-                val res = app.get(endpoint, headers = overrides)
-                val decrypted = decryptEnvelope(res.text)
-                if (!decrypted.isNullOrBlank()) {
-                    return decrypted
-                }
-            } catch (t: Throwable) {
-                Log.e("Cartoony", "API fallback $endpoint failed: ${t.message}")
-            }
+    private suspend fun get(url: String, base: String): String? {
+        return try {
+            val h = reqHeaders.toMutableMap().also { it["Origin"] = base; it["Referer"] = "$base/" }
+            decryptEnvelope(app.get(url, headers = h).text)
+        } catch (t: Throwable) {
+            Log.e("Cartoony", "GET $url failed: ${t.message}")
+            null
         }
-        return null
     }
 
-    private suspend fun apiGetDecrypted(path: String): String? {
-        return fetchApiWithFallback(path, isLegacy = false)
+    private suspend fun apiGet(path: String): String? =
+        get("$mainUrl/api/sp/$path", mainUrl) ?: get("$watchDomain/api/sp/$path", watchDomain)
+
+    private suspend fun legacyGet(path: String): String? =
+        get("$mainUrl/api/$path", mainUrl) ?: get("$watchDomain/api/$path", watchDomain)
+
+    private suspend fun spLink(epId: Int, showId: Int?, base: String): String? {
+        return try {
+            val h = reqHeaders.toMutableMap().also { it["Origin"] = base; it["Referer"] = "$base/" }
+            val body = mutableMapOf("episodeId" to epId.toString())
+            if (showId != null) body["showId"] = showId.toString()
+            decryptEnvelope(app.post("$base/api/sp/episode/link", headers = h, data = body).text)
+        } catch (t: Throwable) {
+            Log.e("Cartoony", "POST spLink failed: ${t.message}")
+            null
+        }
     }
 
     private fun getUrlForShow(show: ShowItem): String {
@@ -194,13 +175,8 @@ class Cartoony : MainAPI() {
         return if (show.isMovie) "$base?type=movie" else "$base?type=series"
     }
 
-    private suspend fun apiLegacyGetDecrypted(path: String): String? {
-        return fetchApiWithFallback(path, isLegacy = true)
-    }
-
     private fun buildSearchFromShow(show: ShowItem): SearchResponse {
-        val url = getUrlForShow(show)
-        return newAnimeSearchResponse(show.title, url, if (show.isMovie) TvType.Movie else TvType.TvSeries) {
+        return newAnimeSearchResponse(show.title, getUrlForShow(show), if (show.isMovie) TvType.Movie else TvType.TvSeries) {
             this.posterUrl = show.poster
         }
     }
@@ -208,12 +184,9 @@ class Cartoony : MainAPI() {
     private fun mapSpShow(obj: JSONObject): ShowItem? {
         val id = obj.optInt("id", -1)
         if (id <= 0) return null
-        val title = obj.optString("name").trim()
-            .ifBlank { obj.optString("pref").trim() }
-            .ifBlank { "غير معنون" }
         return ShowItem(
             id = id,
-            title = title,
+            title = obj.optString("name").trim().ifBlank { obj.optString("pref").trim().ifBlank { "غير معنون" } },
             plot = obj.optString("pref").ifBlank { null },
             poster = obj.optString("cover_full_path").ifBlank { obj.optString("cover").ifBlank { null } },
             isMovie = obj.optInt("is_movie", 0) == 1,
@@ -234,127 +207,78 @@ class Cartoony : MainAPI() {
     private fun mapLegacyShow(obj: JSONObject): ShowItem? {
         val id = obj.optInt("id", -1)
         if (id <= 0) return null
-        val title = obj.optString("title").trim().ifBlank { "غير معنون" }
-        val category = obj.optString("category").lowercase()
         val episodesCount = obj.optString("episodes_count")
-        val isMovie = category.contains("فيلم") ||
-                (!episodesCount.contains("حلقة") && episodesCount.toIntOrNull() == 1)
-
+        val category = obj.optString("category").lowercase()
+        val isMovie = category.contains("فيلم") || (!episodesCount.contains("حلقة") && episodesCount.toIntOrNull() == 1)
         val durationStr = obj.optString("episodes_length")
         val durationMin = Regex("(\\d+)").find(durationStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
-
         return ShowItem(
             id = id,
-            title = title,
+            title = obj.optString("title").trim().ifBlank { "غير معنون" },
             plot = obj.optString("description").ifBlank { null },
-            poster = obj.optString("poster_cover").ifBlank { null }
-                ?.let { "https://cartoony.net/assets/img/posters/$it" },
+            poster = obj.optString("poster_cover").ifBlank { null }?.let { "https://cartoony.net/assets/img/posters/$it" },
             isMovie = isMovie,
             tags = parseTags(obj.optString("category")),
             rating100 = parseRating100(obj.optDouble("rating", 0.0)),
             durationMin = durationMin,
             year = obj.optString("release_year").toIntOrNull(),
-            minAge = null,
             fromLegacy = true
         )
     }
 
     private suspend fun getSpShows(): List<ShowItem> {
-        val txt = apiGetDecrypted("tvshows") ?: return emptyList()
-        val arr = JSONArray(txt)
-        val out = mutableListOf<ShowItem>()
-        for (i in 0 until arr.length()) {
-            arr.optJSONObject(i)?.let { mapSpShow(it) }?.let(out::add)
-        }
-        return out
+        val txt = apiGet("tvshows") ?: return emptyList()
+        val arr = try { JSONArray(txt) } catch (e: Exception) { return emptyList() }
+        return (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let { o -> mapSpShow(o) } }
     }
 
     private suspend fun getLegacyShows(): List<ShowItem> {
-        val txt = apiLegacyGetDecrypted("tvshows") ?: return emptyList()
-        val arr = JSONArray(txt)
-        val out = mutableListOf<ShowItem>()
-        for (i in 0 until arr.length()) {
-            arr.optJSONObject(i)?.let { mapLegacyShow(it) }?.let(out::add)
-        }
-        return out
+        val txt = legacyGet("tvshows") ?: return emptyList()
+        val arr = try { JSONArray(txt) } catch (e: Exception) { return emptyList() }
+        return (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let { o -> mapLegacyShow(o) } }
     }
 
     private suspend fun getMergedShows(): List<ShowItem> {
         val now = System.currentTimeMillis()
-        val cached = cachedShows
-        if (cached != null && (now - cachedShowsAt) < showCacheTtlMs) {
-            return cached
-        }
-
-        // Fast path: load SP first and return immediately if legacy fails/slow later in call chain
-        val sp = getSpShows()
-        val legacy = getLegacyShows()
-
+        cachedShows?.takeIf { (now - cachedShowsAt) < showCacheTtlMs }?.let { return it }
         val merged = LinkedHashMap<Int, ShowItem>()
-        for (s in sp) merged[s.id] = s
-
-        for (l in legacy) {
-            val current = merged[l.id]
-            if (current == null) {
-                merged[l.id] = l
-            } else {
-                merged[l.id] = current.copy(
-                    title = if (current.title.isBlank() || current.title == "غير معنون") l.title else current.title,
-                    plot = current.plot ?: l.plot,
-                    poster = current.poster ?: l.poster,
-                    isMovie = current.isMovie || l.isMovie,
-                    tags = (current.tags + l.tags).distinct(),
-                    rating100 = current.rating100 ?: l.rating100,
-                    durationMin = current.durationMin ?: l.durationMin,
-                    year = current.year ?: l.year,
-                    minAge = current.minAge ?: l.minAge,
-                    fromLegacy = current.fromLegacy || l.fromLegacy
-                )
-            }
+        for (s in getSpShows()) merged[s.id] = s
+        for (l in getLegacyShows()) {
+            val cur = merged[l.id]
+            if (cur == null) merged[l.id] = l
+            else merged[l.id] = cur.copy(
+                title = if (cur.title.isBlank() || cur.title == "غير معنون") l.title else cur.title,
+                plot = cur.plot ?: l.plot, poster = cur.poster ?: l.poster,
+                isMovie = cur.isMovie || l.isMovie, tags = (cur.tags + l.tags).distinct(),
+                rating100 = cur.rating100 ?: l.rating100, durationMin = cur.durationMin ?: l.durationMin,
+                year = cur.year ?: l.year, minAge = cur.minAge ?: l.minAge,
+                fromLegacy = cur.fromLegacy || l.fromLegacy
+            )
         }
-
-        val result = merged.values.toList()
-        cachedShows = result
-        cachedShowsAt = now
-        return result
+        return merged.values.toList().also { cachedShows = it; cachedShowsAt = now }
     }
 
     private suspend fun getLegacyEpisodes(showId: Int): List<LegacyEpisode> {
-        val txt = apiLegacyGetDecrypted("episodes?id=$showId") ?: return emptyList()
-        val arr = JSONArray(txt)
-        val out = mutableListOf<LegacyEpisode>()
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            out.add(
-                LegacyEpisode(
-                    id = o.optInt("id", -1),
-                    title = o.optString("title").ifBlank { "Episode ${o.optInt("order_id", i + 1)}" },
-                    durationSec = o.optInt("duration", 0).takeIf { it > 0 },
-                    orderId = o.optInt("order_id", i + 1).takeIf { it > 0 },
-                    thumbnail = o.optString("thumbnail").ifBlank { null }
-                        ?.let { "https://cartoony.net/assets/img/thumbnails/$it" },
-                    videoId = o.optString("video_id").ifBlank { null }
-                )
+        val txt = legacyGet("episodes?id=$showId") ?: return emptyList()
+        val arr = try { JSONArray(txt) } catch (e: Exception) { return emptyList() }
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            LegacyEpisode(
+                id = o.optInt("id", -1),
+                title = o.optString("title").ifBlank { "Episode ${o.optInt("order_id", i + 1)}" },
+                durationSec = o.optInt("duration", 0).takeIf { it > 0 },
+                orderId = o.optInt("order_id", i + 1).takeIf { it > 0 },
+                thumbnail = o.optString("thumbnail").ifBlank { null }?.let { "https://cartoony.net/assets/img/thumbnails/$it" },
+                videoId = o.optString("video_id").ifBlank { null }
             )
-        }
-        return out.sortedBy { it.orderId ?: Int.MAX_VALUE }
+        }.sortedBy { it.orderId ?: Int.MAX_VALUE }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val q = query.trim()
-        if (q.isBlank()) return emptyList()
-
+        val q = query.trim().ifBlank { return emptyList() }
         val qNorm = normalizeTitle(q)
-        val merged = getMergedShows()
-
-        val results = merged.filter { s ->
-            val hay = normalizeTitle(
-                listOf(s.title, s.plot ?: "", s.tags.joinToString(" ")).joinToString(" ")
-            )
-            hay.contains(qNorm)
-        }
-
-        return results
+        return getMergedShows()
+            .filter { s -> normalizeTitle(listOf(s.title, s.plot ?: "", s.tags.joinToString(" ")).joinToString(" ")).contains(qNorm) }
             .distinctBy { it.id }
             .map(::buildSearchFromShow)
     }
@@ -364,44 +288,29 @@ class Cartoony : MainAPI() {
         val merged = getMergedShows()
         val mergedById = merged.associateBy { it.id }
 
-        val recentTxt = apiGetDecrypted("recentEpisodes")
-        if (recentTxt != null) {
-            val arr = JSONArray(recentTxt)
+        apiGet("recentEpisodes")?.let { txt ->
+            val arr = try { JSONArray(txt) } catch (e: Exception) { null } ?: return@let
             val latest = mutableListOf<SearchResponse>()
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
                 val showId = o.optInt("tv_series_id", -1)
-                val epId = o.optInt("id", -1)
-                if (showId <= 0 || epId <= 0) continue
-
+                if (showId <= 0) continue
                 val show = mergedById[showId]
-                val title = show?.title ?: o.optString("name").ifBlank { o.optString("pref").ifBlank { "غير معنون" } }
-                val poster = show?.poster ?: o.optString("cover_full_path").ifBlank { o.optString("cover") }
+                val title = show?.title ?: o.optString("name").ifBlank { "غير معنون" }
+                val poster = show?.poster ?: o.optString("cover_full_path")
                 val url = if (show != null) getUrlForShow(show) else "$mainUrl/watch/sp/$showId"
-
-                latest.add(
-                    newAnimeSearchResponse(title, url, if (show?.isMovie == true) TvType.Movie else TvType.TvSeries) {
-                        this.posterUrl = poster
-                    }
-                )
+                latest.add(newAnimeSearchResponse(title, url, if (show?.isMovie == true) TvType.Movie else TvType.TvSeries) { this.posterUrl = poster })
             }
             if (latest.isNotEmpty()) sections.add(HomePageList("Latest", latest.distinctBy { it.url }))
         }
 
         fun section(name: String, list: List<ShowItem>) {
-            if (list.isNotEmpty()) sections.add(
-                HomePageList(
-                    name,
-                    list.distinctBy { it.id }.map(::buildSearchFromShow)
-                )
-            )
+            if (list.isNotEmpty()) sections.add(HomePageList(name, list.distinctBy { it.id }.map(::buildSearchFromShow)))
         }
 
         section("New Uploads", merged.filter { it.isNew }.ifEmpty { merged.take(60) })
         section("Most Watched", merged.filter { it.isPopular })
-        section(
-            "Top Rated",
-            merged.filter { it.isTop }.ifEmpty { merged.sortedByDescending { it.rating100 ?: 0 }.take(60) })
+        section("Top Rated", merged.filter { it.isTop }.ifEmpty { merged.sortedByDescending { it.rating100 ?: 0 }.take(60) })
         section("Hot", merged.filter { it.isHot })
         section("Old Classics", merged.filter { it.isZaman })
 
@@ -409,149 +318,84 @@ class Cartoony : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val urlWithoutQuery = url.substringBefore("?")
-        val watchParts = urlWithoutQuery.substringAfter("/watch/", "").split("/").filter { it.isNotBlank() }
-        
-        // Parse showId and episodeId (if any)
+        val urlNoQuery = url.substringBefore("?")
+        val watchParts = urlNoQuery.substringAfter("/watch/", "").split("/").filter { it.isNotBlank() }
+
         val showIdStr: String?
         val episodeIdStr: String?
-        if (watchParts.isNotEmpty() && watchParts[0] == "sp") {
-            showIdStr = watchParts.getOrNull(1)
-            episodeIdStr = watchParts.getOrNull(2)
-        } else if (watchParts.isNotEmpty()) {
-            showIdStr = watchParts.getOrNull(0)
-            episodeIdStr = watchParts.getOrNull(1)
-        } else {
-            showIdStr = urlWithoutQuery.substringAfterLast("/")
-            episodeIdStr = null
+        when {
+            watchParts.firstOrNull() == "sp" -> { showIdStr = watchParts.getOrNull(1); episodeIdStr = watchParts.getOrNull(2) }
+            watchParts.isNotEmpty() -> { showIdStr = watchParts.getOrNull(0); episodeIdStr = watchParts.getOrNull(1) }
+            else -> { showIdStr = urlNoQuery.substringAfterLast("/"); episodeIdStr = null }
         }
-        
+
         val id = showIdStr?.toIntOrNull() ?: return null
         val show = getMergedShows().firstOrNull { it.id == id }
         val isMovie = show?.isMovie == true || url.contains("type=movie") || url.contains("/movie/")
 
-        // If an episode deep link was pasted (e.g. watch/sp/1017/32293)
-        if (episodeIdStr != null && episodeIdStr.toIntOrNull() != null) {
+        // Direct episode deep-link (e.g. /watch/sp/1017/32293)
+        if (episodeIdStr?.toIntOrNull() != null) {
             val epId = episodeIdStr.toInt()
-            return newMovieLoadResponse(
-                name = "Cartoony Episode",
-                url = url,
-                dataUrl = "spEpisode:$epId|$id",
-                type = TvType.Anime
-            )
+            return newMovieLoadResponse(name = "Cartoony Episode", url = url, type = TvType.Anime, dataUrl = "sp:$epId|$id")
         }
 
-        // Movie path
         if (isMovie) {
-            // legacy first for full catalog, fallback to sp
-            val legacyEpisodes = getLegacyEpisodes(id)
-            if (legacyEpisodes.isNotEmpty()) {
-                val first = legacyEpisodes.first()
-                return newMovieLoadResponse(
-                    name = show?.title ?: first.title,
-                    url = url,
-                    dataUrl = "legacyVideo:${first.videoId ?: ""}|${first.id}|$id",
-                    type = TvType.Movie
-                ) {
+            // Try legacy first
+            val legEps = getLegacyEpisodes(id)
+            if (legEps.isNotEmpty()) {
+                val first = legEps.first()
+                return newMovieLoadResponse(name = show?.title ?: first.title, url = url, type = TvType.Movie, dataUrl = "leg:${first.videoId ?: ""}|${first.id}|$id") {
                     this.posterUrl = show?.poster ?: first.thumbnail
-                    this.plot = show?.plot
-                    this.tags = show?.tags
-                    this.rating = show?.rating100
+                    this.plot = show?.plot; this.tags = show?.tags; this.rating = show?.rating100
                     this.duration = show?.durationMin ?: first.durationSec?.div(60)
-                    this.year = show?.year
-                    this.contentRating = parseAgeRating(show?.minAge)
+                    this.year = show?.year; this.contentRating = parseAgeRating(show?.minAge)
                 }
             }
-
             // SP fallback
-            val spEpisodesTxt = apiGetDecrypted("episodes?id=$id") ?: return null
-            val spEpisodesArr = JSONArray(spEpisodesTxt)
-            val firstSp = spEpisodesArr.optJSONObject(0) ?: return null
-            val epId = firstSp.optInt("id", -1)
-            if (epId <= 0) return null
+            val spTxt = apiGet("episodes?id=$id") ?: return null
+            val spArr = try { JSONArray(spTxt) } catch (e: Exception) { return null }
+            val firstSp = spArr.optJSONObject(0) ?: return null
+            val epId = firstSp.optInt("id", -1).takeIf { it > 0 } ?: return null
+            return newMovieLoadResponse(name = show?.title ?: "Cartoony Movie", url = url, type = TvType.Movie, dataUrl = "sp:$epId|$id") {
+                this.posterUrl = show?.poster ?: firstSp.optString("cover_full_path")
+                this.plot = show?.plot; this.tags = show?.tags; this.rating = show?.rating100
+                this.duration = show?.durationMin; this.year = show?.year; this.contentRating = parseAgeRating(show?.minAge)
+            }
+        }
 
-            return newMovieLoadResponse(
-                name = show?.title ?: firstSp.optString("name")
-                    .ifBlank { firstSp.optString("pref").ifBlank { "Cartoony Movie" } },
-                url = url,
-                dataUrl = "spEpisode:$epId|$id",
-                type = TvType.Movie
-            ) {
-                this.posterUrl =
-                    show?.poster ?: firstSp.optString("cover_full_path").ifBlank { firstSp.optString("cover") }
-                this.plot = show?.plot ?: firstSp.optString("pref").ifBlank { firstSp.optString("name") }
-                this.tags = show?.tags
-                this.rating = show?.rating100
-                this.duration = show?.durationMin ?: firstSp.optInt("duration", 0).takeIf { it > 0 }?.div(60)
-                this.year = show?.year
+        // Series
+        val legEps = getLegacyEpisodes(id)
+        if (legEps.isNotEmpty()) {
+            val eps = legEps.mapIndexed { idx, ep ->
+                newEpisode("leg:${ep.videoId ?: ""}|${ep.id}|$id") {
+                    this.name = ep.title; this.episode = ep.orderId ?: (idx + 1); this.posterUrl = ep.thumbnail ?: show?.poster
+                }
+            }
+            return newTvSeriesLoadResponse(show?.title ?: "Cartoony Series", url, TvType.TvSeries, eps) {
+                this.posterUrl = show?.poster; this.plot = show?.plot; this.tags = show?.tags
+                this.rating = show?.rating100; this.duration = show?.durationMin; this.year = show?.year
                 this.contentRating = parseAgeRating(show?.minAge)
             }
         }
 
-        // Series path
-        if (!isMovie) {
-            val legacyEpisodes = getLegacyEpisodes(id)
-            if (legacyEpisodes.isNotEmpty()) {
-                val eps = legacyEpisodes.mapIndexed { idx, ep ->
-                    newEpisode("legacyVideo:${ep.videoId ?: ""}|${ep.id}|${id}") {
-                        this.name = ep.title
-                        this.episode = ep.orderId ?: (idx + 1)
-                        this.posterUrl = ep.thumbnail ?: show?.poster
-                    }
-                }
-                return newTvSeriesLoadResponse(
-                    name = show?.title ?: "Cartoony Series",
-                    url = url,
-                    type = TvType.TvSeries,
-                    episodes = eps
-                ) {
-                    this.posterUrl = show?.poster
-                    this.plot = show?.plot
-                    this.tags = show?.tags
-                    this.rating = show?.rating100
-                    this.duration = show?.durationMin
-                    this.year = show?.year
-                    this.contentRating = parseAgeRating(show?.minAge)
-                }
-            }
-
-            // SP fallback
-            val spEpisodesTxt = apiGetDecrypted("episodes?id=$id") ?: return null
-            val spEpisodesArr = JSONArray(spEpisodesTxt)
-            val eps = mutableListOf<Episode>()
-            for (i in 0 until spEpisodesArr.length()) {
-                val epObj = spEpisodesArr.optJSONObject(i) ?: continue
-                val epId = epObj.optInt("id", -1)
-                if (epId <= 0) continue
-                val epName = epObj.optString("name").ifBlank { epObj.optString("pref") }
-                    .ifBlank { "Episode ${epObj.optInt("number", i + 1)}" }
-                val epNum = epObj.optInt("number", i + 1)
-                eps.add(
-                    newEpisode("spEpisode:$epId|$id") {
-                        this.name = epName
-                        this.episode = epNum
-                        this.posterUrl = epObj.optString("cover_full_path").ifBlank { epObj.optString("cover") }
-                    }
-                )
-            }
-
-            return newTvSeriesLoadResponse(
-                name = show?.title ?: "Cartoony Series",
-                url = url,
-                type = TvType.TvSeries,
-                episodes = eps
-            ) {
-                this.posterUrl = show?.poster
-                this.plot = show?.plot
-                this.tags = show?.tags
-                this.rating = show?.rating100
-                this.duration = show?.durationMin
-                this.year = show?.year
-                this.contentRating = parseAgeRating(show?.minAge)
-            }
+        // SP fallback episodes
+        val spTxt = apiGet("episodes?id=$id") ?: return null
+        val spArr = try { JSONArray(spTxt) } catch (e: Exception) { return null }
+        val eps = mutableListOf<Episode>()
+        for (i in 0 until spArr.length()) {
+            val o = spArr.optJSONObject(i) ?: continue
+            val epId = o.optInt("id", -1).takeIf { it > 0 } ?: continue
+            val epName = o.optString("name").ifBlank { o.optString("pref").ifBlank { "Episode ${o.optInt("number", i + 1)}" } }
+            eps.add(newEpisode("sp:$epId|$id") {
+                this.name = epName; this.episode = o.optInt("number", i + 1)
+                this.posterUrl = o.optString("cover_full_path").ifBlank { o.optString("cover") }
+            })
         }
-
-        return null
+        return if (eps.isEmpty()) null else newTvSeriesLoadResponse(show?.title ?: "Cartoony Series", url, TvType.TvSeries, eps) {
+            this.posterUrl = show?.poster; this.plot = show?.plot; this.tags = show?.tags
+            this.rating = show?.rating100; this.duration = show?.durationMin; this.year = show?.year
+            this.contentRating = parseAgeRating(show?.minAge)
+        }
     }
 
     override suspend fun loadLinks(
@@ -560,160 +404,79 @@ class Cartoony : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Legacy playback
-        if (data.startsWith("legacyVideo:")) {
-            val payload = data.removePrefix("legacyVideo:")
-            val videoId = payload.substringBefore("|")
-            val episodeIdPart = payload.substringAfter("|", "").substringBefore("|")
-            val showIdPart = payload.substringAfterLast("|", "")
-            
-            if (episodeIdPart.isNotBlank()) {
-                val showQuery = if (showIdPart.isNotBlank() && showIdPart != episodeIdPart) "&showId=$showIdPart" else ""
-                val legacyTxt = apiLegacyGetDecrypted("episode?episodeId=$episodeIdPart$showQuery")
-                    if (legacyTxt != null) {
-                        val obj = try { JSONObject(legacyTxt) } catch (e: Exception) { null }
-                        if (obj != null) {
-                            val streamUrl = obj.optString("streamUrl").trim()
-                        if (streamUrl.startsWith("http")) {
-                            callback(
-                                ExtractorLink(
-                                    source = name,
-                                    name = "$name Legacy",
-                                    url = streamUrl,
-                                    referer = "https://cartoony.net/",
-                                    quality = Qualities.Unknown.value,
-                                    isM3u8 = false
-                                )
-                            )
-                            return true
-                        }
-                        }
+        Log.d("Cartoony", "loadLinks: $data")
+
+        // ─── LEGACY (legacyVideo OR leg prefix) ──────────────────────────
+        if (data.startsWith("leg:") || data.startsWith("legacyVideo:")) {
+            val payload = if (data.startsWith("leg:")) data.removePrefix("leg:") else data.removePrefix("legacyVideo:")
+            val parts = payload.split("|")
+            val videoId   = parts.getOrNull(0)?.trim() ?: ""
+            val episodeId = parts.getOrNull(1)?.trim() ?: ""
+            val showId    = parts.getOrNull(2)?.trim() ?: ""
+
+            if (episodeId.isNotBlank()) {
+                val q = if (showId.isNotBlank() && showId != episodeId) "&showId=$showId" else ""
+                val txt = legacyGet("episode?episodeId=$episodeId$q")
+                if (txt != null) {
+                    val streamUrl = try { JSONObject(txt).optString("streamUrl", "") } catch (e: Exception) { "" }
+                    if (streamUrl.startsWith("http")) {
+                        callback(ExtractorLink(name, "$name Legacy", streamUrl, "$mainUrl/", Qualities.Unknown.value, false))
+                        return true
                     }
                 }
+            }
 
-                // direct by video id fallback
-                if (videoId.isNotBlank()) {
-                    val direct = "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8"
-                    callback(
-                        ExtractorLink(
-                            source = name,
-                            name = "$name Legacy Auto",
-                            url = direct,
-                            referer = "https://cartoony.net/",
-                            quality = Qualities.Unknown.value,
-                            isM3u8 = false
-                        )
-                    )
-                    return true
-                }
+            if (videoId.isNotBlank() && videoId != "null") {
+                callback(ExtractorLink(name, "$name Direct", "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8", "$mainUrl/", Qualities.Unknown.value, false))
+                return true
+            }
+            return false
         }
 
-        // SP playback
-        var epIdStr = ""
-        var showIdStr = ""
-        val payload = when {
+        // ─── SP (sp: prefix or spEpisode: prefix) ────────────────────────
+        val rawPayload = when {
+            data.startsWith("sp:") -> data.removePrefix("sp:")
             data.startsWith("spEpisode:") -> data.removePrefix("spEpisode:")
             data.startsWith("episode:") -> data.removePrefix("episode:")
             else -> data
         }
-        val spParts = payload.split("|")
-        epIdStr = spParts.getOrNull(0)?.trim() ?: ""
-        showIdStr = spParts.getOrNull(1)?.trim() ?: ""
-        
-        val epId = epIdStr.toIntOrNull() ?: return false
-        val showId = showIdStr.toIntOrNull()
+        val parts = rawPayload.split("|")
+        val epId   = parts.getOrNull(0)?.trim()?.toIntOrNull() ?: return false
+        val showId = parts.getOrNull(1)?.trim()?.toIntOrNull()
 
-        // Strategy 1: SP endpoint
-        val bases = listOf(mainUrl, watchDomain)
-        for (base in bases) {
-            runCatching {
-                val overrides = reqHeaders.toMutableMap()
-                overrides["Origin"] = base
-                overrides["Referer"] = "$base/"
-                
-                app.post(
-                    url = "$base/api/sp/episode/link",
-                    headers = overrides,
-                    data = mutableMapOf<String, String>().apply {
-                        put("episodeId", epId.toString())
-                        if (showId != null) put("showId", showId.toString())
+        // Strategy 1: SP episode/link POST (both domains)
+        for (base in listOf(mainUrl, watchDomain)) {
+            val txt = spLink(epId, showId, base)
+            if (txt != null) {
+                val obj = try { JSONObject(txt) } catch (e: Exception) { null }
+                if (obj != null) {
+                    val link = obj.optString("link", "").trim()
+                    if (link.startsWith("http")) {
+                        callback(ExtractorLink(name, "$name SP", link, "$base/", Qualities.Unknown.value, false))
+                        return true
                     }
-                )
-            }.getOrNull()?.let { res ->
-                val decrypted = decryptEnvelope(res.text)
-                if (!decrypted.isNullOrBlank()) {
-                    val obj = try { JSONObject(decrypted) } catch (e: Exception) { null }
-                    if (obj != null) {
-                        val link = obj.optString("link").trim()
-                        if (link.isNotBlank()) {
-                            callback(
-                                ExtractorLink(
-                                    source = name,
-                                    name = "$name Auto",
-                                    url = link,
-                                    referer = "$base/",
-                                    quality = Qualities.Unknown.value,
-                                    isM3u8 = false
-                                )
-                            )
-                            return true
-                        }
-
-                        val cdnPrivate = obj.optString("cdn_stream_private_id").trim()
-                        if (cdnPrivate.isNotBlank()) {
-                            val fallback = "https://vod.spacetoongo.com/asset/$cdnPrivate/play_video/index.m3u8"
-                            callback(
-                                ExtractorLink(
-                                    source = name,
-                                    name = "$name Fallback",
-                                    url = fallback,
-                                    referer = "$base/",
-                                    quality = Qualities.Unknown.value,
-                                    isM3u8 = true
-                                )
-                            )
-                            return true
-                        }
+                    val cdn = obj.optString("cdn_stream_private_id", "").trim()
+                    if (cdn.isNotBlank()) {
+                        callback(ExtractorLink(name, "$name CDN", "https://vod.spacetoongo.com/asset/$cdn/play_video/index.m3u8", "$base/", Qualities.Unknown.value, false))
+                        return true
                     }
                 }
             }
         }
 
-        // Strategy 2: legacy endpoint by numeric episode id
-        val showQuery = if (showId != null) "&showId=$showId" else ""
-        val legacyTxt = apiLegacyGetDecrypted("episode?episodeId=$epId$showQuery")
-        if (!legacyTxt.isNullOrBlank()) {
-            val obj = try { JSONObject(legacyTxt) } catch (e: Exception) { null }
-            if (obj != null) {
-                val streamUrl = obj.optString("streamUrl").trim()
-            if (streamUrl.startsWith("http")) {
-                callback(
-                    ExtractorLink(
-                        source = name,
-                        name = "$name Legacy",
-                        url = streamUrl,
-                        referer = "$watchDomain/",
-                        quality = Qualities.Unknown.value,
-                        isM3u8 = streamUrl.contains(".m3u8")
-                    )
-                )
+        // Strategy 2: Legacy episode by ep id
+        val q = if (showId != null) "&showId=$showId" else ""
+        val ltx = legacyGet("episode?episodeId=$epId$q")
+        if (ltx != null) {
+            val su = try { JSONObject(ltx).optString("streamUrl", "") } catch (e: Exception) { "" }
+            if (su.startsWith("http")) {
+                callback(ExtractorLink(name, "$name Legacy", su, "$watchDomain/", Qualities.Unknown.value, false))
                 return true
-            }
             }
         }
 
-        // Strategy 3: direct HLS pattern fallback
-        val direct = "https://pegasus.5387692.xyz/api/hls/$epId/playlist.m3u8"
-        callback(
-            ExtractorLink(
-                source = name,
-                name = "$name Direct",
-                url = direct,
-                referer = "$watchDomain/",
-                quality = Qualities.Unknown.value,
-                isM3u8 = false
-            )
-        )
+        // Strategy 3: direct pegasus fallback
+        callback(ExtractorLink(name, "$name HLS", "https://pegasus.5387692.xyz/api/hls/$epId/playlist.m3u8", "$watchDomain/", Qualities.Unknown.value, false))
         return true
     }
 }
