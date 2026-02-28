@@ -582,7 +582,7 @@ class Cartoony : MainAPI() {
                                     url = streamUrl,
                                     referer = "https://cartoony.net/",
                                     quality = Qualities.Unknown.value,
-                                    isM3u8 = streamUrl.contains(".m3u8")
+                                    isM3u8 = false
                                 )
                             )
                             return true
@@ -597,11 +597,11 @@ class Cartoony : MainAPI() {
                     callback(
                         ExtractorLink(
                             source = name,
-                            name = "$name Legacy",
+                            name = "$name Legacy Auto",
                             url = direct,
                             referer = "https://cartoony.net/",
                             quality = Qualities.Unknown.value,
-                            isM3u8 = true
+                            isM3u8 = false
                         )
                     )
                     return true
@@ -649,11 +649,11 @@ class Cartoony : MainAPI() {
                             callback(
                                 ExtractorLink(
                                     source = name,
-                                    name = name,
+                                    name = "$name Auto",
                                     url = link,
                                     referer = "$base/",
                                     quality = Qualities.Unknown.value,
-                                    isM3u8 = link.contains(".m3u8") || link.contains("/hls/") || link.contains("playlist")
+                                    isM3u8 = false
                                 )
                             )
                             return true
@@ -711,7 +711,7 @@ class Cartoony : MainAPI() {
                 url = direct,
                 referer = "$watchDomain/",
                 quality = Qualities.Unknown.value,
-                isM3u8 = true
+                isM3u8 = false
             )
         )
         return true
