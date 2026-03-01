@@ -364,36 +364,51 @@ class Cartoony : MainAPI() {
         }
 
         // Series
+        // First, attempt to get legacy episodes
         val legEps = getLegacyEpisodes(id)
-        if (legEps.isNotEmpty()) {
-            val eps = legEps.mapIndexed { idx, ep ->
-                newEpisode("leg:${ep.videoId ?: ""}|${ep.id}|$id") {
-                    this.name = ep.title; this.episode = ep.orderId ?: (idx + 1); this.posterUrl = ep.thumbnail ?: show?.poster
-                }
+        Log.d("Cartoony", "Legacy episodes count: ${legEps.size} for showId=$id")
+        // Then, attempt to get SP episodes as fallback
+        val spTxt = apiGet("episodes?id=$id")
+        val spArr = spTxt?.let { try { JSONArray(it) } catch (e: Exception) { null } }
+        val spEps = spArr?.let { arr ->
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                val epId = o.optInt("id", -1).takeIf { it > 0 } ?: return@mapNotNull null
+                val epName = o.optString("name").ifBlank { o.optString("pref").ifBlank { "Episode ${o.optInt("number", i + 1)}" } }
+                val poster = o.optString("cover_full_path").ifBlank { o.optString("cover") }
+                Pair(epId, Triple(epName, o.optInt("number", i + 1), poster))
             }
-            return newTvSeriesLoadResponse(show?.title ?: "Cartoony Series", url, TvType.TvSeries, eps) {
-                this.posterUrl = show?.poster; this.plot = show?.plot; this.tags = show?.tags
-                this.rating = show?.rating100; this.duration = show?.durationMin; this.year = show?.year
-                this.contentRating = parseAgeRating(show?.minAge)
-            }
-        }
+        } ?: emptyList()
 
-        // SP fallback episodes
-        val spTxt = apiGet("episodes?id=$id") ?: return null
-        val spArr = try { JSONArray(spTxt) } catch (e: Exception) { return null }
-        val eps = mutableListOf<Episode>()
-        for (i in 0 until spArr.length()) {
-            val o = spArr.optJSONObject(i) ?: continue
-            val epId = o.optInt("id", -1).takeIf { it > 0 } ?: continue
-            val epName = o.optString("name").ifBlank { o.optString("pref").ifBlank { "Episode ${o.optInt("number", i + 1)}" } }
-            eps.add(newEpisode("sp:$epId|$id") {
-                this.name = epName; this.episode = o.optInt("number", i + 1)
-                this.posterUrl = o.optString("cover_full_path").ifBlank { o.optString("cover") }
+        // Combine legacy and SP episodes, preferring legacy when available
+        val combinedEps = mutableListOf<Episode>()
+        // Add legacy episodes first
+        legEps.forEachIndexed { idx, ep ->
+            combinedEps.add(newEpisode("leg:${ep.videoId ?: ""}|${ep.id}|$id") {
+                this.name = ep.title
+                this.episode = ep.orderId ?: (idx + 1)
+                this.posterUrl = ep.thumbnail ?: show?.poster
             })
         }
-        return if (eps.isEmpty()) null else newTvSeriesLoadResponse(show?.title ?: "Cartoony Series", url, TvType.TvSeries, eps) {
-            this.posterUrl = show?.poster; this.plot = show?.plot; this.tags = show?.tags
-            this.rating = show?.rating100; this.duration = show?.durationMin; this.year = show?.year
+        // Add SP episodes that are not already covered (by order or title)
+        // Simple approach: add all SP episodes after legacy ones
+        spEps.forEach { (epId, triple) ->
+            val (epName, number, poster) = triple
+            combinedEps.add(newEpisode("sp:$epId|$id") {
+                this.name = epName
+                this.episode = number
+                this.posterUrl = poster.ifBlank { show?.poster }
+            })
+        }
+
+        if (combinedEps.isEmpty()) return null
+        return newTvSeriesLoadResponse(show?.title ?: "Cartoony Series", url, TvType.TvSeries, combinedEps) {
+            this.posterUrl = show?.poster
+            this.plot = show?.plot
+            this.tags = show?.tags
+            this.rating = show?.rating100
+            this.duration = show?.durationMin
+            this.year = show?.year
             this.contentRating = parseAgeRating(show?.minAge)
         }
     }
@@ -406,77 +421,68 @@ class Cartoony : MainAPI() {
     ): Boolean {
         Log.d("Cartoony", "loadLinks: $data")
 
-        // ─── LEGACY (legacyVideo OR leg prefix) ──────────────────────────
-        if (data.startsWith("leg:") || data.startsWith("legacyVideo:")) {
-            val payload = if (data.startsWith("leg:")) data.removePrefix("leg:") else data.removePrefix("legacyVideo:")
-            val parts = payload.split("|")
-            val videoId   = parts.getOrNull(0)?.trim() ?: ""
-            val episodeId = parts.getOrNull(1)?.trim() ?: ""
-            val showId    = parts.getOrNull(2)?.trim() ?: ""
+        // Parse IDs from data payload
+        // Format: [prefix:](videoId|episodeId|showId)
+        val raw = data.substringAfter(":")
+        val parts = raw.split("|").map { it.trim() }
+        
+        val videoId   = parts.getOrNull(0)?.takeIf { it.isNotBlank() && it != "null" }
+        val episodeId = parts.getOrNull(1)?.takeIf { it.isNotBlank() && it != "null" }?.toIntOrNull()
+        val showId    = parts.getOrNull(2)?.takeIf { it.isNotBlank() && it != "null" }?.toIntOrNull()
 
-            if (episodeId.isNotBlank()) {
-                val q = if (showId.isNotBlank() && showId != episodeId) "&showId=$showId" else ""
-                val txt = legacyGet("episode?episodeId=$episodeId$q")
+        // We'll collect all candidates for potential direct HLS links
+        val idCandidates = mutableSetOf<String>()
+        videoId?.let { idCandidates.add(it) }
+        episodeId?.let { idCandidates.add(it.toString()) }
+
+        var linkFound = false
+
+        // Strategy 1: SP episode/link POST (Try both domains)
+        val spEpId = episodeId ?: videoId?.toIntOrNull()
+        if (spEpId != null) {
+            for (base in listOf(mainUrl, watchDomain)) {
+                val txt = spLink(spEpId, showId, base)
                 if (txt != null) {
-                    val streamUrl = try { JSONObject(txt).optString("streamUrl", "") } catch (e: Exception) { "" }
-                    if (streamUrl.startsWith("http")) {
-                        callback(ExtractorLink(name, "$name Legacy", streamUrl, "$mainUrl/", Qualities.Unknown.value, false))
-                        return true
+                    val obj = try { JSONObject(txt) } catch (e: Exception) { null }
+                    if (obj != null) {
+                        val link = obj.optString("link", "").trim()
+                        if (link.startsWith("http")) {
+                            callback(ExtractorLink(name, "$name SP", link, "$base/", Qualities.Unknown.value, false))
+                            linkFound = true
+                        }
+                        val cdn = obj.optString("cdn_stream_private_id", "").trim()
+                        if (cdn.isNotBlank()) {
+                            callback(ExtractorLink(name, "$name CDN", "https://vod.spacetoongo.com/asset/$cdn/play_video/index.m3u8", "$base/", Qualities.Unknown.value, false))
+                            linkFound = true
+                        }
                     }
                 }
+                if (linkFound) break
             }
-
-            if (videoId.isNotBlank() && videoId != "null") {
-                callback(ExtractorLink(name, "$name Direct", "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8", "$mainUrl/", Qualities.Unknown.value, false))
-                return true
-            }
-            return false
         }
 
-        // ─── SP (sp: prefix or spEpisode: prefix) ────────────────────────
-        val rawPayload = when {
-            data.startsWith("sp:") -> data.removePrefix("sp:")
-            data.startsWith("spEpisode:") -> data.removePrefix("spEpisode:")
-            data.startsWith("episode:") -> data.removePrefix("episode:")
-            else -> data
-        }
-        val parts = rawPayload.split("|")
-        val epId   = parts.getOrNull(0)?.trim()?.toIntOrNull() ?: return false
-        val showId = parts.getOrNull(1)?.trim()?.toIntOrNull()
-
-        // Strategy 1: SP episode/link POST (both domains)
-        for (base in listOf(mainUrl, watchDomain)) {
-            val txt = spLink(epId, showId, base)
-            if (txt != null) {
-                val obj = try { JSONObject(txt) } catch (e: Exception) { null }
-                if (obj != null) {
-                    val link = obj.optString("link", "").trim()
-                    if (link.startsWith("http")) {
-                        callback(ExtractorLink(name, "$name SP", link, "$base/", Qualities.Unknown.value, false))
-                        return true
-                    }
-                    val cdn = obj.optString("cdn_stream_private_id", "").trim()
-                    if (cdn.isNotBlank()) {
-                        callback(ExtractorLink(name, "$name CDN", "https://vod.spacetoongo.com/asset/$cdn/play_video/index.m3u8", "$base/", Qualities.Unknown.value, false))
-                        return true
-                    }
+        // Strategy 2: Legacy episode API GET
+        if (!linkFound && episodeId != null) {
+            val q = if (showId != null && showId != episodeId) "&showId=$showId" else ""
+            val ltx = legacyGet("episode?episodeId=$episodeId$q")
+            if (ltx != null) {
+                val obj = try { JSONObject(ltx) } catch (e: Exception) { null }
+                val su = obj?.optString("streamUrl", "") ?: ""
+                if (su.startsWith("http")) {
+                    callback(ExtractorLink(name, "$name Legacy", su, "$mainUrl/", Qualities.Unknown.value, su.contains(".m3u8")))
+                    linkFound = true
                 }
             }
         }
 
-        // Strategy 2: Legacy episode by ep id
-        val q = if (showId != null) "&showId=$showId" else ""
-        val ltx = legacyGet("episode?episodeId=$epId$q")
-        if (ltx != null) {
-            val su = try { JSONObject(ltx).optString("streamUrl", "") } catch (e: Exception) { "" }
-            if (su.startsWith("http")) {
-                callback(ExtractorLink(name, "$name Legacy", su, "$watchDomain/", Qualities.Unknown.value, false))
-                return true
-            }
+        // Strategy 3: Pegasus Fallback (Try all numeric candidates)
+        // If we still have no link, or even if we do (as extra mirrors), try the direct HLS endpoint
+        for (id in idCandidates) {
+            val pegasusUrl = "https://pegasus.5387692.xyz/api/hls/$id/playlist.m3u8"
+            callback(ExtractorLink(name, "$name HLS", pegasusUrl, "$mainUrl/", Qualities.Unknown.value, true))
+            linkFound = true
         }
 
-        // Strategy 3: direct pegasus fallback
-        callback(ExtractorLink(name, "$name HLS", "https://pegasus.5387692.xyz/api/hls/$epId/playlist.m3u8", "$watchDomain/", Qualities.Unknown.value, false))
-        return true
+        return linkFound
     }
 }
