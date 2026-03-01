@@ -13,6 +13,7 @@ import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
+import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.LinkedHashMap
@@ -101,7 +102,13 @@ class Cartoony : MainAPI() {
     }
 
     private fun normalizeTitle(s: String): String {
-        return s.lowercase().replace('|', ' ').replace('-', ' ').replace('–', ' ').replace("  ", " ").trim()
+        return s.lowercase()
+            .replace(Regex("[أإآ]"), "ا")
+            .replace(Regex("ة"), "ه")
+            .replace(Regex("ى"), "ي")
+            .replace(Regex("[^a-z0-9\u0621-\u064A\\s]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
     }
 
     private fun hexToBytes(hex: String): ByteArray {
@@ -142,8 +149,8 @@ class Cartoony : MainAPI() {
         }
     }
 
-    private suspend fun get(url: String, base: String): String? {
-        return try {
+    private suspend fun get(url: String, base: String): String? = withTimeoutOrNull(10000) {
+        try {
             val h = reqHeaders.toMutableMap().also { it["Origin"] = base; it["Referer"] = "$base/" }
             decryptEnvelope(app.get(url, headers = h).text)
         } catch (t: Throwable) {
@@ -158,10 +165,13 @@ class Cartoony : MainAPI() {
     private suspend fun legacyGet(path: String): String? =
         get("$mainUrl/api/$path", mainUrl) ?: get("$watchDomain/api/$path", watchDomain)
 
-    private suspend fun spLink(epId: Int, showId: Int?, base: String): String? {
-        return try {
+    private suspend fun spLink(epId: Int, showId: Int?, base: String): String? = withTimeoutOrNull(10000) {
+        try {
             val h = reqHeaders.toMutableMap().also { it["Origin"] = base; it["Referer"] = "$base/" }
-            val body = mutableMapOf("episodeId" to epId.toString())
+            val body = mutableMapOf(
+                "episodeId" to epId.toString(),
+                "userId" to "anon_${System.currentTimeMillis()}_${(1000..9999).random()}"
+            )
             if (showId != null) body["showId"] = showId.toString()
             decryptEnvelope(app.post("$base/api/sp/episode/link", headers = h, data = body).text)
         } catch (t: Throwable) {
@@ -238,23 +248,36 @@ class Cartoony : MainAPI() {
         return (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let { o -> mapLegacyShow(o) } }
     }
 
-    private suspend fun getMergedShows(): List<ShowItem> {
+    private suspend fun getMergedShows(): List<ShowItem> = coroutineScope {
         val now = System.currentTimeMillis()
-        cachedShows?.takeIf { (now - cachedShowsAt) < showCacheTtlMs }?.let { return it }
-        
-        // We will collect ALL shows, but we'll mark their source explicitly.
-        // To avoid ID collisions, we don't merge them by ID anymore.
-        val allShows = mutableListOf<ShowItem>()
-        allShows.addAll(getSpShows())
-        
-        val legShows = getLegacyShows()
-        // Simple deduplication by title if they already exist in SP (optional, but safer to keep both if IDs differ)
-        allShows.addAll(legShows)
-        
-        return allShows.distinctBy { (if (it.fromLegacy) "leg_" else "sp_") + it.id }.also { 
-            cachedShows = it
-            cachedShowsAt = now 
+        val cache = cachedShows
+        if (cache != null && (now - cachedShowsAt) < showCacheTtlMs) {
+            return@coroutineScope cache
         }
+        
+        // Parallel fetch SP and Legacy lists to improve speed
+        val spJob = async { try { getSpShows() } catch (e: Exception) { emptyList<ShowItem>() } }
+        val legJob = async { try { getLegacyShows() } catch (e: Exception) { emptyList<ShowItem>() } }
+        
+        val resSp = spJob.await()
+        val resLeg = legJob.await()
+        
+        val all = resSp + resLeg
+        
+        // If both failed/empty, and we have ANY cache (even stale), return it
+        if (all.isEmpty() && cache != null) {
+            return@coroutineScope cache
+        }
+        
+        val result = all.distinctBy { (if (it.fromLegacy) "leg_" else "sp_") + it.id }
+        if (result.isNotEmpty()) {
+            cachedShows = result
+            cachedShowsAt = now
+        } else if (cache != null) {
+            return@coroutineScope cache
+        }
+        
+        result
     }
 
     private suspend fun getLegacyEpisodes(showId: Int): List<LegacyEpisode> {
@@ -282,12 +305,19 @@ class Cartoony : MainAPI() {
             .map(::buildSearchFromShow)
     }
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse = coroutineScope {
         val sections = mutableListOf<HomePageList>()
-        val merged = getMergedShows()
+        
+        // Fetch shows and recent episodes in parallel
+        val mergedJob = async { getMergedShows() }
+        val recentJob = async { try { apiGet("recentEpisodes") } catch (e: Exception) { null } }
+        
+        val merged = mergedJob.await()
+        val recentTxt = recentJob.await()
+        
         val mergedBySpId = merged.filter { !it.fromLegacy }.associateBy { it.id }
 
-        apiGet("recentEpisodes")?.let { txt ->
+        recentTxt?.let { txt ->
             val arr = try { JSONArray(txt) } catch (e: Exception) { null } ?: return@let
             val latest = mutableListOf<SearchResponse>()
             for (i in 0 until arr.length()) {
@@ -315,7 +345,7 @@ class Cartoony : MainAPI() {
         section("Top Rated", merged.filter { it.isTop }.ifEmpty { merged.sortedByDescending { it.rating100 ?: 0 }.take(40) })
         section("Old Classics", merged.filter { it.isZaman })
 
-        return newHomePageResponse(sections)
+        newHomePageResponse(sections)
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -437,10 +467,9 @@ class Cartoony : MainAPI() {
                 }
                 if (linkFound) break
             }
-            // SP HLS fallback: Only if we haven't found a link yet
-            val hlsId = videoId ?: episodeId?.toString()
-            if (hlsId != null && !linkFound) {
-                callback(ExtractorLink(name, "$name HLS", "https://pegasus.5387692.xyz/api/hls/$hlsId/playlist.m3u8", "$mainUrl/", Qualities.Unknown.value, true))
+            // SP HLS fallback: ONLY if videoId is a long hex/asset string
+            if (!linkFound && videoId != null && videoId.length > 20) {
+                callback(ExtractorLink(name, "$name HLS", "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8", "$mainUrl/", Qualities.Unknown.value, true))
                 linkFound = true
             }
         } else {
@@ -457,8 +486,8 @@ class Cartoony : MainAPI() {
                     }
                 }
             }
-            // Legacy Stage 2: Pegasus fallback ONLY if videoId is valid (not episode database ID)
-            if (videoId != null && !linkFound) {
+            // Legacy Stage 2: Pegasus fallback ONLY if videoId is a long hex string
+            if (!linkFound && videoId != null && videoId.length > 10) {
                 callback(ExtractorLink(name, "$name HLS", "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8", "$mainUrl/", Qualities.Unknown.value, true))
                 linkFound = true
             }
