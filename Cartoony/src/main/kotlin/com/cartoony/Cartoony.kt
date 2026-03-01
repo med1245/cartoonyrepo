@@ -450,7 +450,7 @@ class Cartoony : MainAPI() {
                 val ltx = legacyGet("episode?episodeId=$episodeId$q")
                 if (ltx != null) {
                     val obj = try { JSONObject(ltx) } catch (e: Exception) { null }
-                    val su = obj?.optString("streamUrl", "").trim()
+                    val su = obj?.optString("streamUrl", "")?.trim() ?: ""
                     if (su.startsWith("http")) {
                         callback(ExtractorLink(name, "$name Legacy", su, "$mainUrl/", Qualities.Unknown.value, su.contains(".m3u8")))
                         linkFound = true
