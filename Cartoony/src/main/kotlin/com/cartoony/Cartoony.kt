@@ -470,51 +470,71 @@ class Cartoony : MainAPI() {
 
         var linkFound = false
 
-        // === STAGE 1: Unified encrypted API (works for both SP and Legacy) ===
-        if (episodeId != null && showId != null) {
-            val streamUrl = fetchEpisodeLink(episodeId, showId)
-            if (streamUrl != null && streamUrl.startsWith("http")) {
-                Log.d("Cartoony", "Stage1 link: $streamUrl")
-                callback(
-                    ExtractorLink(
-                        source = name,
-                        name = "$name Stream",
-                        url = streamUrl,
-                        referer = "",
-                        quality = Qualities.Unknown.value,
-                        isM3u8 = streamUrl.contains(".m3u8")
-                    )
-                )
+        if (isSp) {
+            // ── SP PATH ─────────────────────────────────────────────────────
+            // Stage 1: Unified GET /api/episode (SP episodes ONLY — do NOT call for Legacy)
+            if (episodeId != null && showId != null) {
+                val streamUrl = fetchEpisodeLink(episodeId, showId)
+                if (streamUrl != null && streamUrl.startsWith("http")) {
+                    Log.d("Cartoony", "SP Stage1 link: $streamUrl")
+                    callback(ExtractorLink(name, "$name Stream", streamUrl, "", Qualities.Unknown.value, streamUrl.contains(".m3u8")))
+                    linkFound = true
+                }
+            }
+
+            // Stage 2: SP POST fallback (/api/sp/episode/link)
+            if (!linkFound && episodeId != null) {
+                for (base in listOf(mainUrl, watchDomain)) {
+                    val txt = spLink(episodeId, showId, base) ?: continue
+                    val obj = try { JSONObject(txt) } catch (e: Exception) { null } ?: continue
+                    val link = obj.optString("link", "").trim().takeIf { it.startsWith("http") }
+                    if (link != null) {
+                        callback(ExtractorLink(name, "$name SP", link, "", Qualities.Unknown.value, link.contains(".m3u8")))
+                        linkFound = true
+                    }
+                    val cdn = obj.optString("cdn_stream_private_id", "").trim().takeIf { it.isNotBlank() }
+                    if (cdn != null) {
+                        callback(ExtractorLink(name, "$name CDN", "https://vod.spacetoongo.com/asset/$cdn/play_video/index.m3u8", "", Qualities.Unknown.value, true))
+                        linkFound = true
+                    }
+                    if (linkFound) break
+                }
+            }
+
+            // Stage 3: Pegasus HLS with verified long hex asset ID
+            if (!linkFound && videoId != null && videoId.length > 20) {
+                val pegUrl = "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8"
+                Log.d("Cartoony", "SP Stage3 Pegasus: $pegUrl")
+                callback(ExtractorLink(name, "$name HLS", pegUrl, "", Qualities.Unknown.value, true))
                 linkFound = true
             }
-        }
+        } else {
+            // ── LEGACY PATH ──────────────────────────────────────────────────
+            // IMPORTANT: Never call fetchEpisodeLink (unified GET) for Legacy shows!
+            // Legacy episode IDs accidentally match SP episode IDs, causing wrong content.
 
-        // === STAGE 2: SP POST fallback ===
-        if (!linkFound && isSp) {
-            val spEpId = episodeId ?: return false
-            for (base in listOf(mainUrl, watchDomain)) {
-                val txt = spLink(spEpId, showId, base) ?: continue
-                val obj = try { JSONObject(txt) } catch (e: Exception) { null } ?: continue
-                val link = obj.optString("link", "").trim().takeIf { it.startsWith("http") }
-                if (link != null) {
-                    callback(ExtractorLink(name, "$name SP", link, "", Qualities.Unknown.value, link.contains(".m3u8")))
-                    linkFound = true
-                }
-                val cdn = obj.optString("cdn_stream_private_id", "").trim().takeIf { it.isNotBlank() }
-                if (cdn != null) {
-                    callback(ExtractorLink(name, "$name CDN", "https://vod.spacetoongo.com/asset/$cdn/play_video/index.m3u8", "", Qualities.Unknown.value, true))
-                    linkFound = true
-                }
-                if (linkFound) break
+            // Stage 1: Pegasus HLS with the videoId stored at episode list time
+            if (videoId != null && videoId.length > 10) {
+                val pegUrl = "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8"
+                Log.d("Cartoony", "Legacy Stage1 Pegasus: $pegUrl")
+                callback(ExtractorLink(name, "$name HLS", pegUrl, "", Qualities.Unknown.value, true))
+                linkFound = true
             }
-        }
 
-        // === STAGE 3: Pegasus fallback using known asset/video ID ===
-        if (!linkFound && videoId != null && videoId.length > 20) {
-            val pegUrl = "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8"
-            Log.d("Cartoony", "Stage3 Pegasus: $pegUrl")
-            callback(ExtractorLink(name, "$name HLS", pegUrl, "", Qualities.Unknown.value, true))
-            linkFound = true
+            // Stage 2: Legacy streamUrl via legacy episode API
+            if (!linkFound && episodeId != null && showId != null) {
+                val txt = legacyGet("episode?episodeId=$episodeId&showId=$showId") ?: 
+                          legacyGet("episode?episodeId=$episodeId")
+                if (txt != null) {
+                    val obj = try { JSONObject(txt) } catch (e: Exception) { null }
+                    val su = obj?.optString("streamUrl", "")?.trim()?.takeIf { it.startsWith("http") }
+                    if (su != null) {
+                        Log.d("Cartoony", "Legacy Stage2 streamUrl: $su")
+                        callback(ExtractorLink(name, "$name Legacy", su, "", Qualities.Unknown.value, su.contains(".m3u8")))
+                        linkFound = true
+                    }
+                }
+            }
         }
 
         if (!linkFound) Log.w("Cartoony", "No link found for: $data")
