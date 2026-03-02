@@ -457,7 +457,31 @@ class Cartoony : MainAPI() {
 
         var linkFound = false
 
-        if (isSp) {
+        // Unified Stage (Try first for both SP and Legacy)
+        if (episodeId != null && showId != null) {
+            val txt = legacyGet("episode?episodeId=$episodeId&showId=$showId")
+            if (txt != null) {
+                val dec = decryptEnvelope(txt)
+                if (dec != null) {
+                    val obj = try { JSONObject(dec) } catch (e: Exception) { null }
+                    val su = obj?.optString("streamUrl", "")?.trim()?.takeIf { it.startsWith("http") }
+                        ?: obj?.optString("link", "")?.trim()?.takeIf { it.startsWith("http") }
+                    
+                    if (su != null) {
+                        callback(ExtractorLink(name, "$name Video", su, "$mainUrl/", Qualities.Unknown.value, su.contains(".m3u8")))
+                        linkFound = true
+                    }
+                    
+                    val cdn = obj?.optString("cdn_stream_private_id", "")?.trim()?.takeIf { it.isNotBlank() }
+                    if (cdn != null) {
+                        callback(ExtractorLink(name, "$name CDN", "https://vod.spacetoongo.com/asset/$cdn/play_video/index.m3u8", "$mainUrl/", Qualities.Unknown.value, true))
+                        linkFound = true
+                    }
+                }
+            }
+        }
+
+        if (isSp && !linkFound) {
             val spEpId = episodeId ?: videoId?.toIntOrNull() ?: return false
             for (base in listOf(mainUrl, watchDomain)) {
                 val txt = spLink(spEpId, showId, base)
@@ -483,22 +507,9 @@ class Cartoony : MainAPI() {
                 callback(ExtractorLink(name, "$name HLS", "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8", "$mainUrl/", Qualities.Unknown.value, true))
                 linkFound = true
             }
-        } else {
-            // Legacy Stage 1: streamUrl from API
-            if (episodeId != null) {
-                val q = if (showId != null && showId != episodeId) "&showId=$showId" else ""
-                val ltx = legacyGet("episode?episodeId=$episodeId$q")
-                if (ltx != null) {
-                    val obj = try { JSONObject(ltx) } catch (e: Exception) { null }
-                    val su = obj?.optString("streamUrl", "")?.trim() ?: ""
-                    if (su.startsWith("http")) {
-                        callback(ExtractorLink(name, "$name Legacy", su, "$mainUrl/", Qualities.Unknown.value, su.contains(".m3u8")))
-                        linkFound = true
-                    }
-                }
-            }
+        } else if (!linkFound) {
             // Legacy Stage 2: Pegasus fallback ONLY if videoId is a long hex string
-            if (!linkFound && videoId != null && videoId.length > 10) {
+            if (videoId != null && videoId.length > 10) {
                 callback(ExtractorLink(name, "$name HLS", "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8", "$mainUrl/", Qualities.Unknown.value, true))
                 linkFound = true
             }
