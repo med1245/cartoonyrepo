@@ -1,0 +1,44 @@
+[
+  {
+    "iconUrl": "https://upload.wikimedia.org/wikipedia/commons/2/2f/Korduene_Logo.png",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/med1245/cartoonyrepo",
+    "fileSize": 42271,
+    "status": 1,
+    "language": "ar",
+    "authors": [
+      "Mehdi Marsaman"
+    ],
+    "tvTypes": [
+      "TvSeries",
+      "Anime",
+      "Movie"
+    ],
+    "version": 14,
+    "internalName": "Cartoony",
+    "description": "Arabic cartoons, anime, series, and movies from cartoony.net",
+    "url": "https://raw.githubusercontent.com/med1245/cartoonyrepo/builds/Cartoony-v14.cs3",
+    "name": "Cartoony"
+  },
+  {
+    "iconUrl": "https://conanaraby.com/wp-content/uploads/2023/05/cropped-favicon-192x192.png",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/med1245/cartoonyrepo",
+    "fileSize": 20346,
+    "status": 1,
+    "language": "ar",
+    "authors": [
+      "Mehdi Marsaman"
+    ],
+    "tvTypes": [
+      "TvSeries",
+      "Anime",
+      "Movie"
+    ],
+    "version": 1,
+    "internalName": "ConanAraby",
+    "description": "كونان بالعربي - Detective Conan episodes and movies in Arabic from conanaraby.com",
+    "url": "https://raw.githubusercontent.com/med1245/cartoonyrepo/builds/ConanAraby-v1.cs3",
+    "name": "ConanAraby"
+  }
+]

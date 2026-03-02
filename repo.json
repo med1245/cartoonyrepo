@@ -1,0 +1,8 @@
+{
+  "name": "Cartoony Repo",
+  "description": "Arabic Cartoony provider",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/med1245/cartoonyrepo/builds/plugins-9d466f26.json"
+  ]
+}
