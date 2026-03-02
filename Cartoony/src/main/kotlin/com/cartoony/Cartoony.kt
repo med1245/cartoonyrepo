@@ -165,6 +165,17 @@ class Cartoony : MainAPI() {
     private suspend fun legacyGet(path: String): String? =
         get("$mainUrl/api/$path", mainUrl) ?: get("$watchDomain/api/$path", watchDomain)
 
+    // Fetch episode video URL via unified /api/episode endpoint (both SP and Legacy)
+    private suspend fun fetchEpisodeLink(episodeId: Int, showId: Int): String? {
+        // The get() function already decrypts, so txt is the decrypted JSON string
+        val txt = legacyGet("episode?episodeId=$episodeId&showId=$showId") ?: return null
+        val obj = try { JSONObject(txt) } catch (e: Exception) { return null }
+        // streamUrl is the Pegasus HLS URL directly
+        return obj.optString("streamUrl", "").trim().ifBlank {
+            obj.optString("link", "").trim().ifBlank { null }
+        }
+    }
+
     private suspend fun spLink(epId: Int, showId: Int?, base: String): String? = withTimeoutOrNull(10000) {
         try {
             val h = reqHeaders.toMutableMap().also { it["Origin"] = base; it["Referer"] = "$base/" }
@@ -444,77 +455,69 @@ class Cartoony : MainAPI() {
         Log.d("Cartoony", "loadLinks: $data")
         val isSp = data.startsWith("sp:")
         val raw = data.substringAfter(":")
-        
-        // Robust key=value parsing
-        val map = raw.split("&").associate { 
-            val p = it.split("=")
+
+        // Robust key=value parsing  (format: sp:v=<vid>&e=<epId>&s=<showId>)
+        val map = raw.split("&").associate {
+            val p = it.split("=", limit = 2)
             p.getOrElse(0) { "" } to p.getOrElse(1) { "" }
         }
-        
+
         val videoId   = map["v"]?.takeIf { it.isNotBlank() && it.lowercase() != "null" }
         val episodeId = map["e"]?.takeIf { it.isNotBlank() && it.lowercase() != "null" }?.toIntOrNull()
         val showId    = map["s"]?.takeIf { it.isNotBlank() && it.lowercase() != "null" }?.toIntOrNull()
 
+        Log.d("Cartoony", "parsed: isSp=$isSp ep=$episodeId show=$showId vid=$videoId")
+
         var linkFound = false
 
-        // Unified Stage (Try first for both SP and Legacy)
+        // === STAGE 1: Unified encrypted API (works for both SP and Legacy) ===
         if (episodeId != null && showId != null) {
-            val txt = legacyGet("episode?episodeId=$episodeId&showId=$showId")
-            if (txt != null) {
-                val dec = decryptEnvelope(txt)
-                if (dec != null) {
-                    val obj = try { JSONObject(dec) } catch (e: Exception) { null }
-                    val su = obj?.optString("streamUrl", "")?.trim()?.takeIf { it.startsWith("http") }
-                        ?: obj?.optString("link", "")?.trim()?.takeIf { it.startsWith("http") }
-                    
-                    if (su != null) {
-                        callback(ExtractorLink(name, "$name Video", su, "$mainUrl/", Qualities.Unknown.value, su.contains(".m3u8")))
-                        linkFound = true
-                    }
-                    
-                    val cdn = obj?.optString("cdn_stream_private_id", "")?.trim()?.takeIf { it.isNotBlank() }
-                    if (cdn != null) {
-                        callback(ExtractorLink(name, "$name CDN", "https://vod.spacetoongo.com/asset/$cdn/play_video/index.m3u8", "$mainUrl/", Qualities.Unknown.value, true))
-                        linkFound = true
-                    }
-                }
+            val streamUrl = fetchEpisodeLink(episodeId, showId)
+            if (streamUrl != null && streamUrl.startsWith("http")) {
+                Log.d("Cartoony", "Stage1 link: $streamUrl")
+                callback(
+                    ExtractorLink(
+                        source = name,
+                        name = "$name Stream",
+                        url = streamUrl,
+                        referer = "",
+                        quality = Qualities.Unknown.value,
+                        isM3u8 = streamUrl.contains(".m3u8")
+                    )
+                )
+                linkFound = true
             }
         }
 
-        if (isSp && !linkFound) {
-            val spEpId = episodeId ?: videoId?.toIntOrNull() ?: return false
+        // === STAGE 2: SP POST fallback ===
+        if (!linkFound && isSp) {
+            val spEpId = episodeId ?: return false
             for (base in listOf(mainUrl, watchDomain)) {
-                val txt = spLink(spEpId, showId, base)
-                if (txt != null) {
-                    val obj = try { JSONObject(txt) } catch (e: Exception) { null }
-                    if (obj != null) {
-                        val link = obj.optString("link", "").trim()
-                        if (link.startsWith("http")) {
-                            callback(ExtractorLink(name, "$name SP", link, "$base/", Qualities.Unknown.value, false))
-                            linkFound = true
-                        }
-                        val cdn = obj.optString("cdn_stream_private_id", "").trim()
-                        if (cdn.isNotBlank()) {
-                            callback(ExtractorLink(name, "$name CDN", "https://vod.spacetoongo.com/asset/$cdn/play_video/index.m3u8", "$base/", Qualities.Unknown.value, false))
-                            linkFound = true
-                        }
-                    }
+                val txt = spLink(spEpId, showId, base) ?: continue
+                val obj = try { JSONObject(txt) } catch (e: Exception) { null } ?: continue
+                val link = obj.optString("link", "").trim().takeIf { it.startsWith("http") }
+                if (link != null) {
+                    callback(ExtractorLink(name, "$name SP", link, "", Qualities.Unknown.value, link.contains(".m3u8")))
+                    linkFound = true
+                }
+                val cdn = obj.optString("cdn_stream_private_id", "").trim().takeIf { it.isNotBlank() }
+                if (cdn != null) {
+                    callback(ExtractorLink(name, "$name CDN", "https://vod.spacetoongo.com/asset/$cdn/play_video/index.m3u8", "", Qualities.Unknown.value, true))
+                    linkFound = true
                 }
                 if (linkFound) break
             }
-            // SP HLS fallback: ONLY if videoId is a long hex/asset string
-            if (!linkFound && videoId != null && videoId.length > 20) {
-                callback(ExtractorLink(name, "$name HLS", "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8", "$mainUrl/", Qualities.Unknown.value, true))
-                linkFound = true
-            }
-        } else if (!linkFound) {
-            // Legacy Stage 2: Pegasus fallback ONLY if videoId is a long hex string
-            if (videoId != null && videoId.length > 10) {
-                callback(ExtractorLink(name, "$name HLS", "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8", "$mainUrl/", Qualities.Unknown.value, true))
-                linkFound = true
-            }
         }
 
+        // === STAGE 3: Pegasus fallback using known asset/video ID ===
+        if (!linkFound && videoId != null && videoId.length > 20) {
+            val pegUrl = "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8"
+            Log.d("Cartoony", "Stage3 Pegasus: $pegUrl")
+            callback(ExtractorLink(name, "$name HLS", pegUrl, "", Qualities.Unknown.value, true))
+            linkFound = true
+        }
+
+        if (!linkFound) Log.w("Cartoony", "No link found for: $data")
         return linkFound
     }
 }
