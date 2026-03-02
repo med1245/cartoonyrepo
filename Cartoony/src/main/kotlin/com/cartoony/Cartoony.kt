@@ -23,7 +23,6 @@ import javax.crypto.spec.SecretKeySpec
 
 class Cartoony : MainAPI() {
     override var mainUrl = "https://cartoony.net"
-    private val watchDomain = "https://carateen.tv"
     override var name = "Cartoony"
     override val hasMainPage = true
     override var lang = "ar"
@@ -34,8 +33,8 @@ class Cartoony : MainAPI() {
     private val reqHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
         "Accept-Language" to "ar,en-US;q=0.9,en;q=0.8",
-        "Referer" to "$watchDomain/",
-        "Origin" to watchDomain,
+        "Referer" to "$mainUrl/",
+        "Origin" to mainUrl,
         "Accept" to "application/json"
     )
 
@@ -149,10 +148,9 @@ class Cartoony : MainAPI() {
         }
     }
 
-    private suspend fun get(url: String, base: String): String? = withTimeoutOrNull(10000) {
+    private suspend fun get(url: String): String? = withTimeoutOrNull(12000) {
         try {
-            val h = reqHeaders.toMutableMap().also { it["Origin"] = base; it["Referer"] = "$base/" }
-            decryptEnvelope(app.get(url, headers = h).text)
+            decryptEnvelope(app.get(url, headers = reqHeaders).text)
         } catch (t: Throwable) {
             Log.e("Cartoony", "GET $url failed: ${t.message}")
             null
@@ -160,40 +158,26 @@ class Cartoony : MainAPI() {
     }
 
     private suspend fun apiGet(path: String): String? =
-        get("$mainUrl/api/sp/$path", mainUrl) ?: get("$watchDomain/api/sp/$path", watchDomain)
+        get("$mainUrl/api/sp/$path")
 
     private suspend fun legacyGet(path: String): String? =
-        get("$mainUrl/api/$path", mainUrl) ?: get("$watchDomain/api/$path", watchDomain)
+        get("$mainUrl/api/$path")
 
-    // Fetch episode video URL via unified /api/episode endpoint (both SP and Legacy)
-    private suspend fun fetchEpisodeLink(episodeId: Int, showId: Int): String? {
-        // The get() function already decrypts, so txt is the decrypted JSON string
-        val txt = legacyGet("episode?episodeId=$episodeId&showId=$showId") ?: return null
-        val obj = try { JSONObject(txt) } catch (e: Exception) { return null }
-        // streamUrl is the Pegasus HLS URL directly
-        return obj.optString("streamUrl", "").trim().ifBlank {
-            obj.optString("link", "").trim().ifBlank { null }
-        }
-    }
-
-    private suspend fun spLink(epId: Int, showId: Int?, base: String): String? = withTimeoutOrNull(10000) {
+    // SP POST /api/sp/episode/link — returns JSON with 'link' field (vod.spacetoongo.com HLS URL)
+    private suspend fun spLink(epId: Int, showId: Int?): String? = withTimeoutOrNull(12000) {
         try {
-            val h = reqHeaders.toMutableMap().also { it["Origin"] = base; it["Referer"] = "$base/" }
-            val body = mutableMapOf(
-                "episodeId" to epId.toString(),
-                "userId" to "anon_${System.currentTimeMillis()}_${(1000..9999).random()}"
-            )
+            val body = mutableMapOf("episodeId" to epId.toString())
             if (showId != null) body["showId"] = showId.toString()
-            decryptEnvelope(app.post("$base/api/sp/episode/link", headers = h, data = body).text)
+            decryptEnvelope(app.post("$mainUrl/api/sp/episode/link", headers = reqHeaders, data = body).text)
         } catch (t: Throwable) {
-            Log.e("Cartoony", "POST spLink failed: ${t.message}")
+            Log.e("Cartoony", "POST spLink($epId) failed: ${t.message}")
             null
         }
     }
 
     private fun getUrlForShow(show: ShowItem): String {
         val base = if (show.fromLegacy) "$mainUrl/watch/${show.id}" else "$mainUrl/watch/sp/${show.id}"
-        return if (show.isMovie) "$base?type=movie" else "$base?type=series"
+        return "$base?type=${if (show.isMovie) "movie" else "series"}&src=${if (show.fromLegacy) "leg" else "sp"}"
     }
 
     private fun buildSearchFromShow(show: ShowItem): SearchResponse {
@@ -254,6 +238,7 @@ class Cartoony : MainAPI() {
     }
 
     private suspend fun getLegacyShows(): List<ShowItem> {
+        // Legacy API returns same shows as SP with different fields; skip to avoid duplicates
         val txt = legacyGet("tvshows") ?: return emptyList()
         val arr = try { JSONArray(txt) } catch (e: Exception) { return emptyList() }
         return (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let { o -> mapLegacyShow(o) } }
@@ -412,17 +397,26 @@ class Cartoony : MainAPI() {
             val spTxt = apiGet("episodes?id=$id")
             val spArr = spTxt?.let { try { JSONArray(it) } catch (e: Exception) { null } }
             spArr?.let { arr ->
-                for (i in 0 until arr.length()) {
-                    val o = arr.optJSONObject(i) ?: continue
-                    val epId = o.optInt("id", -1).takeIf { it > 0 } ?: continue
-                    val epName = o.optString("name").ifBlank { o.optString("pref").ifBlank { "Episode ${o.optInt("number", i + 1)}" } }
-                    val poster = o.optString("cover_full_path").ifBlank { o.optString("cover") }
+                // Collect all episodes first so we can sort them by number
+                data class SpEp(val epId: Int, val name: String, val number: Int, val poster: String?, val vid: String?)
+                val spEps = (0 until arr.length()).mapNotNull { i ->
+                    val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                    val epId = o.optInt("id", -1).takeIf { it > 0 } ?: return@mapNotNull null
+                    // SP API: title is in 'pref', 'name' is always empty
+                    val epName = o.optString("pref").trim().ifBlank {
+                        o.optString("name").trim().ifBlank { "Episode ${o.optInt("number", i + 1)}" }
+                    }
+                    val poster = o.optString("cover_full_path").ifBlank { o.optString("cover").ifBlank { null } }
                     val vid = o.optString("video_id", "").takeIf { it.isNotBlank() && it.lowercase() != "null" }
-                    val data = "sp:v=${vid ?: ""}&e=$epId&s=$id"
+                    val num = o.optInt("number", i + 1)
+                    SpEp(epId, epName, num, poster, vid)
+                }.sortedBy { it.number }  // Sort by episode number (API may not return in order)
+                spEps.forEachIndexed { i, ep ->
+                    val data = "sp:v=${ep.vid ?: ""}&e=${ep.epId}&s=$id"
                     episodes.add(newEpisode(data) {
-                        this.name = epName
-                        this.episode = o.optInt("number", i + 1)
-                        this.posterUrl = poster.ifBlank { show?.poster }
+                        this.name = ep.name
+                        this.episode = ep.number
+                        this.posterUrl = ep.poster ?: show?.poster
                     })
                 }
             }
@@ -472,39 +466,39 @@ class Cartoony : MainAPI() {
 
         if (isSp) {
             // ── SP PATH ─────────────────────────────────────────────────────
-            // Stage 1: Unified GET /api/episode (SP episodes ONLY — do NOT call for Legacy)
-            if (episodeId != null && showId != null) {
-                val streamUrl = fetchEpisodeLink(episodeId, showId)
-                if (streamUrl != null && streamUrl.startsWith("http")) {
-                    Log.d("Cartoony", "SP Stage1 link: $streamUrl")
-                    callback(ExtractorLink(name, "$name Stream", streamUrl, "", Qualities.Unknown.value, streamUrl.contains(".m3u8")))
-                    linkFound = true
+            // Primary: POST /api/sp/episode/link → returns 'link' (vod.spacetoongo.com HLS URL)
+            if (episodeId != null) {
+                // Try up to 2 times — some episode IDs return intermittent 500
+                var txt: String? = null
+                for (attempt in 1..2) {
+                    txt = spLink(episodeId, showId)
+                    if (txt != null) break
+                    if (attempt < 2) kotlinx.coroutines.delay(800)
                 }
-            }
-
-            // Stage 2: SP POST fallback (/api/sp/episode/link)
-            if (!linkFound && episodeId != null) {
-                for (base in listOf(mainUrl, watchDomain)) {
-                    val txt = spLink(episodeId, showId, base) ?: continue
-                    val obj = try { JSONObject(txt) } catch (e: Exception) { null } ?: continue
+                val obj = txt?.let { try { JSONObject(it) } catch (e: Exception) { null } }
+                if (obj != null) {
+                    // 'link' field = full authenticated HLS URL (vod.spacetoongo.com)
                     val link = obj.optString("link", "").trim().takeIf { it.startsWith("http") }
                     if (link != null) {
+                        Log.d("Cartoony", "SP link: $link")
                         callback(ExtractorLink(name, "$name SP", link, "", Qualities.Unknown.value, link.contains(".m3u8")))
                         linkFound = true
                     }
-                    val cdn = obj.optString("cdn_stream_private_id", "").trim().takeIf { it.isNotBlank() }
+                    // 'cdn_stream_private_id' = asset ID for vod.spacetoongo.com
+                    val cdn = obj.optString("cdn_stream_private_id", "").trim().takeIf { it.isNotBlank() && it.lowercase() != "null" }
                     if (cdn != null) {
-                        callback(ExtractorLink(name, "$name CDN", "https://vod.spacetoongo.com/asset/$cdn/play_video/index.m3u8", "", Qualities.Unknown.value, true))
+                        val cdnUrl = "https://vod.spacetoongo.com/asset/$cdn/play_video/index.m3u8"
+                        Log.d("Cartoony", "SP cdn: $cdnUrl")
+                        callback(ExtractorLink(name, "$name VOD", cdnUrl, "", Qualities.Unknown.value, true))
                         linkFound = true
                     }
-                    if (linkFound) break
                 }
             }
 
-            // Stage 3: Pegasus HLS with verified long hex asset ID
+            // Fallback: Pegasus HLS (only works for old-style episodes with a hex video_id)
             if (!linkFound && videoId != null && videoId.length > 20) {
                 val pegUrl = "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8"
-                Log.d("Cartoony", "SP Stage3 Pegasus: $pegUrl")
+                Log.d("Cartoony", "SP Pegasus: $pegUrl")
                 callback(ExtractorLink(name, "$name HLS", pegUrl, "", Qualities.Unknown.value, true))
                 linkFound = true
             }
