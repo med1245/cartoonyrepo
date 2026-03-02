@@ -30,7 +30,9 @@ class Cartoony : MainAPI() {
 
     private val apiKey = "7annaba3l_loves_crypto_safe_key!"
 
-    private val reqHeaders = mapOf(
+    // NOTE: reqHeaders is built as a function to avoid the $mainUrl initializer issue
+    // (mainUrl is an override var; evaluating it at property-init time may give wrong value)
+    private fun buildHeaders(): Map<String, String> = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
         "Accept-Language" to "ar,en-US;q=0.9,en;q=0.8",
         "Referer" to "$mainUrl/",
@@ -81,7 +83,7 @@ class Cartoony : MainAPI() {
 
     private fun parseTags(raw: String?): List<String> {
         if (raw.isNullOrBlank()) return emptyList()
-        return raw.split(",", "،").map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        return raw.split(",", "،", "\t").map { it.trim() }.filter { it.isNotBlank() }.distinct()
     }
 
     private fun parseYearFromCreatedAt(createdAt: String?): Int? {
@@ -150,7 +152,7 @@ class Cartoony : MainAPI() {
 
     private suspend fun get(url: String): String? = withTimeoutOrNull(12000) {
         try {
-            decryptEnvelope(app.get(url, headers = reqHeaders).text)
+            decryptEnvelope(app.get(url, headers = buildHeaders()).text)
         } catch (t: Throwable) {
             Log.e("Cartoony", "GET $url failed: ${t.message}")
             null
@@ -168,7 +170,7 @@ class Cartoony : MainAPI() {
         try {
             val body = mutableMapOf("episodeId" to epId.toString())
             if (showId != null) body["showId"] = showId.toString()
-            decryptEnvelope(app.post("$mainUrl/api/sp/episode/link", headers = reqHeaders, data = body).text)
+            decryptEnvelope(app.post("$mainUrl/api/sp/episode/link", headers = buildHeaders(), data = body).text)
         } catch (t: Throwable) {
             Log.e("Cartoony", "POST spLink($epId) failed: ${t.message}")
             null
@@ -177,7 +179,7 @@ class Cartoony : MainAPI() {
 
     private fun getUrlForShow(show: ShowItem): String {
         val base = if (show.fromLegacy) "$mainUrl/watch/${show.id}" else "$mainUrl/watch/sp/${show.id}"
-        return "$base?type=${if (show.isMovie) "movie" else "series"}&src=${if (show.fromLegacy) "leg" else "sp"}"
+        return if (show.isMovie) "$base?type=movie" else "$base?type=series"
     }
 
     private fun buildSearchFromShow(show: ShowItem): SearchResponse {
@@ -189,9 +191,11 @@ class Cartoony : MainAPI() {
     private fun mapSpShow(obj: JSONObject): ShowItem? {
         val id = obj.optInt("id", -1)
         if (id <= 0) return null
+        // SP API: 'name' is the show title, 'pref' is description/subtitle
+        val title = obj.optString("name").trim().ifBlank { obj.optString("pref").trim().ifBlank { "غير معنون" } }
         return ShowItem(
             id = id,
-            title = obj.optString("name").trim().ifBlank { obj.optString("pref").trim().ifBlank { "غير معنون" } },
+            title = title,
             plot = obj.optString("pref").ifBlank { null },
             poster = obj.optString("cover_full_path").ifBlank { obj.optString("cover").ifBlank { null } },
             isMovie = obj.optInt("is_movie", 0) == 1,
@@ -238,7 +242,6 @@ class Cartoony : MainAPI() {
     }
 
     private suspend fun getLegacyShows(): List<ShowItem> {
-        // Legacy API returns same shows as SP with different fields; skip to avoid duplicates
         val txt = legacyGet("tvshows") ?: return emptyList()
         val arr = try { JSONArray(txt) } catch (e: Exception) { return emptyList() }
         return (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let { o -> mapLegacyShow(o) } }
@@ -250,21 +253,16 @@ class Cartoony : MainAPI() {
         if (cache != null && (now - cachedShowsAt) < showCacheTtlMs) {
             return@coroutineScope cache
         }
-        
-        // Parallel fetch SP and Legacy lists to improve speed
+
         val spJob = async { try { getSpShows() } catch (e: Exception) { emptyList<ShowItem>() } }
         val legJob = async { try { getLegacyShows() } catch (e: Exception) { emptyList<ShowItem>() } }
-        
+
         val resSp = spJob.await()
         val resLeg = legJob.await()
-        
         val all = resSp + resLeg
-        
-        // If both failed/empty, and we have ANY cache (even stale), return it
-        if (all.isEmpty() && cache != null) {
-            return@coroutineScope cache
-        }
-        
+
+        if (all.isEmpty() && cache != null) return@coroutineScope cache
+
         val result = all.distinctBy { (if (it.fromLegacy) "leg_" else "sp_") + it.id }
         if (result.isNotEmpty()) {
             cachedShows = result
@@ -272,7 +270,7 @@ class Cartoony : MainAPI() {
         } else if (cache != null) {
             return@coroutineScope cache
         }
-        
+
         result
     }
 
@@ -303,14 +301,13 @@ class Cartoony : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse = coroutineScope {
         val sections = mutableListOf<HomePageList>()
-        
-        // Fetch shows and recent episodes in parallel
+
         val mergedJob = async { getMergedShows() }
         val recentJob = async { try { apiGet("recentEpisodes") } catch (e: Exception) { null } }
-        
+
         val merged = mergedJob.await()
         val recentTxt = recentJob.await()
-        
+
         val mergedBySpId = merged.filter { !it.fromLegacy }.associateBy { it.id }
 
         recentTxt?.let { txt ->
@@ -335,8 +332,8 @@ class Cartoony : MainAPI() {
 
         section("New Uploads", merged.filter { it.isNew }.ifEmpty { merged.take(40) })
         section("Featured Movies", merged.filter { it.isMovie }.sortedByDescending { it.rating100 ?: 0 }.take(40))
-        section("Trending TV shows", merged.filter { !it.isMovie && (it.isPopular || it.isHot) }.take(40))
-        section("Anime", merged.filter { it.tags.any { t -> t.lowercase().contains("أنمي") || t.lowercase().contains("anime") } }.take(40))
+        section("Trending TV Shows", merged.filter { !it.isMovie && (it.isPopular || it.isHot) }.take(40))
+        section("Anime", merged.filter { it.tags.any { t -> t.contains("أنمي") || t.lowercase().contains("anime") } }.take(40))
         section("Most Watched", merged.filter { it.isPopular })
         section("Top Rated", merged.filter { it.isTop }.ifEmpty { merged.sortedByDescending { it.rating100 ?: 0 }.take(40) })
         section("Old Classics", merged.filter { it.isZaman })
@@ -347,7 +344,7 @@ class Cartoony : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val urlNoQuery = url.substringBefore("?")
         val watchParts = urlNoQuery.substringAfter("/watch/", "").split("/").filter { it.isNotBlank() }
-        
+
         val isSp = watchParts.firstOrNull() == "sp"
         val showIdStr = if (isSp) watchParts.getOrNull(1) else watchParts.getOrNull(0)
         val episodeIdStr = if (isSp) watchParts.getOrNull(2) else watchParts.getOrNull(1)
@@ -397,12 +394,11 @@ class Cartoony : MainAPI() {
             val spTxt = apiGet("episodes?id=$id")
             val spArr = spTxt?.let { try { JSONArray(it) } catch (e: Exception) { null } }
             spArr?.let { arr ->
-                // Collect all episodes first so we can sort them by number
-                data class SpEp(val epId: Int, val name: String, val number: Int, val poster: String?, val vid: String?)
+                // SP API: episode title is in 'pref' field; 'name' is always empty
+                data class SpEp(val epId: Int, val epName: String, val number: Int, val poster: String?, val vid: String?)
                 val spEps = (0 until arr.length()).mapNotNull { i ->
                     val o = arr.optJSONObject(i) ?: return@mapNotNull null
                     val epId = o.optInt("id", -1).takeIf { it > 0 } ?: return@mapNotNull null
-                    // SP API: title is in 'pref', 'name' is always empty
                     val epName = o.optString("pref").trim().ifBlank {
                         o.optString("name").trim().ifBlank { "Episode ${o.optInt("number", i + 1)}" }
                     }
@@ -410,11 +406,12 @@ class Cartoony : MainAPI() {
                     val vid = o.optString("video_id", "").takeIf { it.isNotBlank() && it.lowercase() != "null" }
                     val num = o.optInt("number", i + 1)
                     SpEp(epId, epName, num, poster, vid)
-                }.sortedBy { it.number }  // Sort by episode number (API may not return in order)
-                spEps.forEachIndexed { i, ep ->
+                }.sortedBy { it.number }
+
+                spEps.forEach { ep ->
                     val data = "sp:v=${ep.vid ?: ""}&e=${ep.epId}&s=$id"
                     episodes.add(newEpisode(data) {
-                        this.name = ep.name
+                        this.name = ep.epName
                         this.episode = ep.number
                         this.posterUrl = ep.poster ?: show?.poster
                     })
@@ -450,7 +447,7 @@ class Cartoony : MainAPI() {
         val isSp = data.startsWith("sp:")
         val raw = data.substringAfter(":")
 
-        // Robust key=value parsing  (format: sp:v=<vid>&e=<epId>&s=<showId>)
+        // Parse key=value format: sp:v=<vid>&e=<epId>&s=<showId>
         val map = raw.split("&").associate {
             val p = it.split("=", limit = 2)
             p.getOrElse(0) { "" } to p.getOrElse(1) { "" }
@@ -465,27 +462,25 @@ class Cartoony : MainAPI() {
         var linkFound = false
 
         if (isSp) {
-            // ── SP PATH ─────────────────────────────────────────────────────
-            // Primary: POST /api/sp/episode/link → returns 'link' (vod.spacetoongo.com HLS URL)
+            // ── SP PATH ──────────────────────────────────────────────────────
+            // POST /api/sp/episode/link → returns 'link' (vod.spacetoongo.com HLS URL)
             if (episodeId != null) {
-                // Try up to 2 times — some episode IDs return intermittent 500
                 var txt: String? = null
                 for (attempt in 1..2) {
                     txt = spLink(episodeId, showId)
                     if (txt != null) break
-                    if (attempt < 2) kotlinx.coroutines.delay(800)
+                    if (attempt < 2) delay(800)
                 }
                 val obj = txt?.let { try { JSONObject(it) } catch (e: Exception) { null } }
                 if (obj != null) {
-                    // 'link' field = full authenticated HLS URL (vod.spacetoongo.com)
                     val link = obj.optString("link", "").trim().takeIf { it.startsWith("http") }
                     if (link != null) {
                         Log.d("Cartoony", "SP link: $link")
                         callback(ExtractorLink(name, "$name SP", link, "", Qualities.Unknown.value, link.contains(".m3u8")))
                         linkFound = true
                     }
-                    // 'cdn_stream_private_id' = asset ID for vod.spacetoongo.com
-                    val cdn = obj.optString("cdn_stream_private_id", "").trim().takeIf { it.isNotBlank() && it.lowercase() != "null" }
+                    val cdn = obj.optString("cdn_stream_private_id", "").trim()
+                            .takeIf { it.isNotBlank() && it.lowercase() != "null" }
                     if (cdn != null) {
                         val cdnUrl = "https://vod.spacetoongo.com/asset/$cdn/play_video/index.m3u8"
                         Log.d("Cartoony", "SP cdn: $cdnUrl")
@@ -495,7 +490,7 @@ class Cartoony : MainAPI() {
                 }
             }
 
-            // Fallback: Pegasus HLS (only works for old-style episodes with a hex video_id)
+            // Fallback: Pegasus HLS (old-style episodes that have a hex video_id)
             if (!linkFound && videoId != null && videoId.length > 20) {
                 val pegUrl = "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8"
                 Log.d("Cartoony", "SP Pegasus: $pegUrl")
@@ -504,26 +499,23 @@ class Cartoony : MainAPI() {
             }
         } else {
             // ── LEGACY PATH ──────────────────────────────────────────────────
-            // IMPORTANT: Never call fetchEpisodeLink (unified GET) for Legacy shows!
-            // Legacy episode IDs accidentally match SP episode IDs, causing wrong content.
-
             // Stage 1: Pegasus HLS with the videoId stored at episode list time
             if (videoId != null && videoId.length > 10) {
                 val pegUrl = "https://pegasus.5387692.xyz/api/hls/$videoId/playlist.m3u8"
-                Log.d("Cartoony", "Legacy Stage1 Pegasus: $pegUrl")
+                Log.d("Cartoony", "Legacy Pegasus: $pegUrl")
                 callback(ExtractorLink(name, "$name HLS", pegUrl, "", Qualities.Unknown.value, true))
                 linkFound = true
             }
 
             // Stage 2: Legacy streamUrl via legacy episode API
             if (!linkFound && episodeId != null && showId != null) {
-                val txt = legacyGet("episode?episodeId=$episodeId&showId=$showId") ?: 
-                          legacyGet("episode?episodeId=$episodeId")
-                if (txt != null) {
-                    val obj = try { JSONObject(txt) } catch (e: Exception) { null }
+                val legTxt = legacyGet("episode?episodeId=$episodeId&showId=$showId")
+                    ?: legacyGet("episode?episodeId=$episodeId")
+                if (legTxt != null) {
+                    val obj = try { JSONObject(legTxt) } catch (e: Exception) { null }
                     val su = obj?.optString("streamUrl", "")?.trim()?.takeIf { it.startsWith("http") }
                     if (su != null) {
-                        Log.d("Cartoony", "Legacy Stage2 streamUrl: $su")
+                        Log.d("Cartoony", "Legacy streamUrl: $su")
                         callback(ExtractorLink(name, "$name Legacy", su, "", Qualities.Unknown.value, su.contains(".m3u8")))
                         linkFound = true
                     }
