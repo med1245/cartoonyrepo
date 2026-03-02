@@ -363,7 +363,7 @@ class Cartoony : MainAPI() {
         // Direct episode deep-link
         if (episodeIdStr?.toIntOrNull() != null) {
             val epId = episodeIdStr.toInt()
-            val data = if (isSp) "sp:$epId|$id" else "leg:|$epId|$id"
+            val data = if (isSp) "sp:e=$epId&s=$id" else "leg:e=$epId&s=$id"
             return newMovieLoadResponse(name = "Cartoony Episode", url = url, type = TvType.Anime, dataUrl = data)
         }
 
@@ -373,7 +373,9 @@ class Cartoony : MainAPI() {
                 val spArr = try { JSONArray(spTxt) } catch (e: Exception) { return null }
                 val firstSp = spArr.optJSONObject(0) ?: return null
                 val epId = firstSp.optInt("id", -1).takeIf { it > 0 } ?: return null
-                return newMovieLoadResponse(name = show?.title ?: "Cartoony Movie", url = url, type = TvType.Movie, dataUrl = "sp:$epId|$id") {
+                val vid = firstSp.optString("video_id", "").takeIf { it.isNotBlank() && it.lowercase() != "null" }
+                val data = "sp:v=${vid ?: ""}&e=$epId&s=$id"
+                return newMovieLoadResponse(name = show?.title ?: "Cartoony Movie", url = url, type = TvType.Movie, dataUrl = data) {
                     this.posterUrl = show?.poster ?: firstSp.optString("cover_full_path")
                     this.plot = show?.plot; this.tags = show?.tags; this.rating = show?.rating100
                     this.duration = show?.durationMin; this.year = show?.year; this.contentRating = parseAgeRating(show?.minAge)
@@ -382,7 +384,8 @@ class Cartoony : MainAPI() {
                 val legEps = getLegacyEpisodes(id)
                 if (legEps.isNotEmpty()) {
                     val first = legEps.first()
-                    return newMovieLoadResponse(name = show?.title ?: first.title, url = url, type = TvType.Movie, dataUrl = "leg:${first.videoId ?: ""}|${first.id}|$id") {
+                    val data = "leg:v=${first.videoId ?: ""}&e=${first.id}&s=$id"
+                    return newMovieLoadResponse(name = show?.title ?: first.title, url = url, type = TvType.Movie, dataUrl = data) {
                         this.posterUrl = show?.poster ?: first.thumbnail
                         this.plot = show?.plot; this.tags = show?.tags; this.rating = show?.rating100
                         this.duration = show?.durationMin ?: first.durationSec?.div(60)
@@ -403,7 +406,9 @@ class Cartoony : MainAPI() {
                     val epId = o.optInt("id", -1).takeIf { it > 0 } ?: continue
                     val epName = o.optString("name").ifBlank { o.optString("pref").ifBlank { "Episode ${o.optInt("number", i + 1)}" } }
                     val poster = o.optString("cover_full_path").ifBlank { o.optString("cover") }
-                    episodes.add(newEpisode("sp:$epId|$id") {
+                    val vid = o.optString("video_id", "").takeIf { it.isNotBlank() && it.lowercase() != "null" }
+                    val data = "sp:v=${vid ?: ""}&e=$epId&s=$id"
+                    episodes.add(newEpisode(data) {
                         this.name = epName
                         this.episode = o.optInt("number", i + 1)
                         this.posterUrl = poster.ifBlank { show?.poster }
@@ -413,7 +418,8 @@ class Cartoony : MainAPI() {
         } else {
             val legEps = getLegacyEpisodes(id)
             legEps.forEachIndexed { i, ep ->
-                episodes.add(newEpisode("leg:${ep.videoId ?: ""}|${ep.id}|$id") {
+                val data = "leg:v=${ep.videoId ?: ""}&e=${ep.id}&s=$id"
+                episodes.add(newEpisode(data) {
                     this.name = ep.title
                     this.episode = ep.orderId ?: (i + 1)
                     this.posterUrl = ep.thumbnail ?: show?.poster
@@ -438,11 +444,16 @@ class Cartoony : MainAPI() {
         Log.d("Cartoony", "loadLinks: $data")
         val isSp = data.startsWith("sp:")
         val raw = data.substringAfter(":")
-        val parts = raw.split("|").map { it.trim() }
         
-        val videoId   = parts.getOrNull(0)?.takeIf { it.isNotBlank() && it.lowercase() != "null" }
-        val episodeId = parts.getOrNull(1)?.takeIf { it.isNotBlank() && it.lowercase() != "null" }?.toIntOrNull()
-        val showId    = parts.getOrNull(2)?.takeIf { it.isNotBlank() && it.lowercase() != "null" }?.toIntOrNull()
+        // Robust key=value parsing
+        val map = raw.split("&").associate { 
+            val p = it.split("=")
+            p.getOrElse(0) { "" } to p.getOrElse(1) { "" }
+        }
+        
+        val videoId   = map["v"]?.takeIf { it.isNotBlank() && it.lowercase() != "null" }
+        val episodeId = map["e"]?.takeIf { it.isNotBlank() && it.lowercase() != "null" }?.toIntOrNull()
+        val showId    = map["s"]?.takeIf { it.isNotBlank() && it.lowercase() != "null" }?.toIntOrNull()
 
         var linkFound = false
 
