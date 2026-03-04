@@ -23,7 +23,9 @@ import javax.crypto.spec.SecretKeySpec
 
 class Cartoony : MainAPI() {
     override var mainUrl = "https://cartoony.net"
+    private val watchDomain = "https://carateen.tv"
     override var name = "Cartoony"
+
     override val hasMainPage = true
     override var lang = "ar"
     override val supportedTypes = setOf(TvType.Anime, TvType.TvSeries, TvType.Movie)
@@ -166,13 +168,13 @@ class Cartoony : MainAPI() {
         get("$mainUrl/api/$path")
 
     // SP POST /api/sp/episode/link — returns JSON with 'link' field (vod.spacetoongo.com HLS URL)
-    private suspend fun spLink(epId: Int, showId: Int?): String? = withTimeoutOrNull(12000) {
+    private suspend fun spLink(epId: Int, showId: Int?, base: String = mainUrl): String? = withTimeoutOrNull(12000) {
         try {
             val body = mutableMapOf("episodeId" to epId.toString())
             if (showId != null) body["showId"] = showId.toString()
-            decryptEnvelope(app.post("$mainUrl/api/sp/episode/link", headers = buildHeaders(), data = body).text)
+            decryptEnvelope(app.post("$base/api/sp/episode/link", headers = buildHeaders(), data = body).text)
         } catch (t: Throwable) {
-            Log.e("Cartoony", "POST spLink($epId) failed: ${t.message}")
+            Log.e("Cartoony", "POST spLink($epId) on $base failed: ${t.message}")
             null
         }
     }
@@ -299,32 +301,9 @@ class Cartoony : MainAPI() {
             .map(::buildSearchFromShow)
     }
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse = coroutineScope {
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val sections = mutableListOf<HomePageList>()
-
-        val mergedJob = async { getMergedShows() }
-        val recentJob = async { try { apiGet("recentEpisodes") } catch (e: Exception) { null } }
-
-        val merged = mergedJob.await()
-        val recentTxt = recentJob.await()
-
-        val mergedBySpId = merged.filter { !it.fromLegacy }.associateBy { it.id }
-
-        recentTxt?.let { txt ->
-            val arr = try { JSONArray(txt) } catch (e: Exception) { null } ?: return@let
-            val latest = mutableListOf<SearchResponse>()
-            for (i in 0 until arr.length()) {
-                val o = arr.optJSONObject(i) ?: continue
-                val showId = o.optInt("tv_series_id", -1)
-                if (showId <= 0) continue
-                val show = mergedBySpId[showId]
-                val title = show?.title ?: o.optString("name").ifBlank { "غير معنون" }
-                val poster = show?.poster ?: o.optString("cover_full_path")
-                val url = if (show != null) getUrlForShow(show) else "$mainUrl/watch/sp/$showId"
-                latest.add(newAnimeSearchResponse(title, url, if (show?.isMovie == true) TvType.Movie else TvType.TvSeries) { this.posterUrl = poster })
-            }
-            if (latest.isNotEmpty()) sections.add(HomePageList("Latest", latest.distinctBy { it.url }))
-        }
+        val merged = getMergedShows()
 
         fun section(name: String, list: List<ShowItem>) {
             if (list.isNotEmpty()) sections.add(HomePageList(name, list.map(::buildSearchFromShow)))
@@ -338,8 +317,9 @@ class Cartoony : MainAPI() {
         section("Top Rated", merged.filter { it.isTop }.ifEmpty { merged.sortedByDescending { it.rating100 ?: 0 }.take(40) })
         section("Old Classics", merged.filter { it.isZaman })
 
-        newHomePageResponse(sections)
+        return newHomePageResponse(sections)
     }
+
 
     override suspend fun load(url: String): LoadResponse? {
         val urlNoQuery = url.substringBefore("?")
@@ -465,11 +445,15 @@ class Cartoony : MainAPI() {
             // ── SP PATH ──────────────────────────────────────────────────────
             // POST /api/sp/episode/link → returns 'link' (vod.spacetoongo.com HLS URL)
             if (episodeId != null) {
+                // Try cartoony.net first (primary for anime), then carateen.tv as fallback (for movies)
                 var txt: String? = null
-                for (attempt in 1..2) {
-                    txt = spLink(episodeId, showId)
+                for (base in listOf(mainUrl, watchDomain)) {
+                    for (attempt in 1..2) {
+                        txt = spLink(episodeId, showId, base)
+                        if (txt != null) break
+                        if (attempt < 2) delay(600)
+                    }
                     if (txt != null) break
-                    if (attempt < 2) delay(800)
                 }
                 val obj = txt?.let { try { JSONObject(it) } catch (e: Exception) { null } }
                 if (obj != null) {
