@@ -194,43 +194,65 @@ class FaselHDX : MainAPI() {
         val doc = fetchDocument(data)
         var found = false
 
-        // Strategy 1: direct download link
-        val downloadUrl = doc.select(".downloadLinks a").attr("href").ifBlank { null }
-        if (downloadUrl != null) {
+        // ── Strategy 1: internal /video_player?player_token= page ────────────
+        // The site lazy-loads the iframe via data-src, not src
+        val iframeSrc = doc.select("iframe[name=player_iframe]").let {
+            it.attr("src").ifBlank { it.attr("data-src") }
+        }.ifBlank {
+            doc.select("iframe.iframe-container, iframe#player-iframe, div.player iframe").let {
+                it.attr("src").ifBlank { it.attr("data-src") }
+            }
+        }.ifBlank { null }
+
+        if (iframeSrc != null) {
             try {
-                val dlDoc = app.get(downloadUrl, interceptor = cfKiller, referer = mainUrl, timeout = 120).document
-                val directUrl = dlDoc.select("div.dl-link a").attr("href").ifBlank { null }
-                if (directUrl != null) {
-                    callback(
-                        ExtractorLink(
-                            name,
-                            "$name Download",
-                            directUrl,
-                            mainUrl,
-                            Qualities.Unknown.value
-                        )
-                    )
+                // Fetch the player page — it contains JW Player setup with file URL
+                val playerDoc = fetchDocument(iframeSrc)
+                val playerHtml = playerDoc.html()
+
+                // Extract file URL from JW Player config: file:"...", file: '...'
+                val fileRegex = Regex("""file\s*[=:]\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']""")
+                val fileMatch = fileRegex.find(playerHtml)?.groupValues?.getOrNull(1)
+                if (fileMatch != null && fileMatch.startsWith("http")) {
+                    val isM3u8 = fileMatch.contains(".m3u8")
+                    if (isM3u8) {
+                        M3u8Helper.generateM3u8(name, fileMatch, referer = iframeSrc)
+                            .toList().forEach(callback)
+                    } else {
+                        callback(ExtractorLink(name, "$name HD", fileMatch, iframeSrc, Qualities.Unknown.value, false))
+                    }
                     found = true
                 }
+
+                // Also check for sources in <source> tags within the player page
+                if (!found) {
+                    playerDoc.select("source[src]").forEach { src ->
+                        val srcUrl = src.attr("abs:src").ifBlank { src.attr("src") }
+                        if (srcUrl.startsWith("http")) {
+                            callback(ExtractorLink(name, "$name Video", srcUrl, iframeSrc, Qualities.Unknown.value, srcUrl.contains(".m3u8")))
+                            found = true
+                        }
+                    }
+                }
             } catch (e: Exception) {
-                // continue to next strategy
+                // fall through to WebView strategy
             }
         }
 
-        // Strategy 2: iframe WebView M3U8
-        val iframeSrc = doc.select("iframe[name=player_iframe]").attr("src").ifBlank {
-            doc.select("iframe.iframe-container").attr("src").ifBlank { null }
-        }
-        if (iframeSrc != null) {
+        // ── Strategy 2: WebView resolver for M3U8 (catches any dynamic player) ──
+        if (!found && iframeSrc != null) {
             try {
-                val resolved = WebViewResolver(Regex("""master\.m3u8|playlist\.m3u8"""))
+                val resolved = WebViewResolver(Regex("""\.m3u8|\.mp4"""))
                     .resolveUsingWebView(requestCreator("GET", iframeSrc, referer = mainUrl))
                     .first
-                val m3u8Url = resolved?.url?.toString()
-                if (!m3u8Url.isNullOrBlank()) {
-                    M3u8Helper.generateM3u8(name, m3u8Url, referer = mainUrl)
-                        .toList()
-                        .forEach(callback)
+                val videoUrl = resolved?.url?.toString()
+                if (!videoUrl.isNullOrBlank()) {
+                    if (videoUrl.contains(".m3u8")) {
+                        M3u8Helper.generateM3u8(name, videoUrl, referer = iframeSrc)
+                            .toList().forEach(callback)
+                    } else {
+                        callback(ExtractorLink(name, "$name WebView", videoUrl, iframeSrc, Qualities.Unknown.value, false))
+                    }
                     found = true
                 }
             } catch (e: Exception) {
@@ -238,26 +260,25 @@ class FaselHDX : MainAPI() {
             }
         }
 
-        // Strategy 3: look for a direct video source in page
-        if (!found) {
-            doc.select("source[src]").forEach { src ->
-                val srcUrl = src.attr("abs:src").ifBlank { src.attr("src") }
-                if (srcUrl.startsWith("http")) {
-                    callback(
-                        ExtractorLink(
-                            name,
-                            "$name Video",
-                            srcUrl,
-                            mainUrl,
-                            Qualities.Unknown.value,
-                            srcUrl.contains(".m3u8")
-                        )
-                    )
+        // ── Strategy 3: direct download link ──────────────────────────────────
+        val downloadUrl = doc.select(".downloadLinks a, .dl-links a").attr("href").ifBlank { null }
+        if (downloadUrl != null) {
+            try {
+                val dlDoc = fetchDocument(downloadUrl)
+                // Some download pages redirect to a direct link
+                val directUrl = dlDoc.select("div.dl-link a, a.download-link, a[href*='.mp4']").attr("href")
+                    .ifBlank { dlDoc.select("source[src]").attr("src") }
+                    .ifBlank { null }
+                if (directUrl != null && directUrl.startsWith("http")) {
+                    callback(ExtractorLink(name, "$name Download", directUrl, mainUrl, Qualities.Unknown.value, directUrl.contains(".m3u8")))
                     found = true
                 }
+            } catch (e: Exception) {
+                // ignore
             }
         }
 
         return found
     }
 }
+
