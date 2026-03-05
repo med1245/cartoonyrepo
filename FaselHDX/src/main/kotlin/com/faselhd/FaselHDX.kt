@@ -192,67 +192,89 @@ class FaselHDX : MainAPI() {
     ): Boolean {
         var found = false
 
-        // ── Strategy 1: WebView on movie page + JS to trigger server button ──────
-        // The iframe src is set ONLY when user clicks "Viewing Server #01".
-        // Inject JS that auto-clicks that button + forces all data-src iframes to load.
+        // ── Strategy 1: WebView on movie page with targeted JS ─────────────────
+        // Exact mechanism discovered via browser inspection:
+        // - The player iframe has a scroll-triggered loadVideoPlayer() function
+        // - Server buttons are <li onclick="player_iframe.location.href = '...'">
+        //   inside ul.tabs-ul — click the <li>, not the <a> inside it
+        // - useOkhttp=false lets WebView handle ALL requests (incl. CF challenges + ads)
+        // - Regex targets scdns.io specifically to avoid intercepting ad streams
         val triggerJs = """
             (function() {
-                // Click the first server/watch button
-                var selectors = [
-                    '.watchServersContainer a', '.serverButton', '.server-item',
-                    '[class*="server"] a', '.watchSel', 'div.episodeNum a'
-                ];
-                for (var i = 0; i < selectors.length; i++) {
-                    var el = document.querySelector(selectors[i]);
-                    if (el) { el.click(); break; }
+                // Method 1: call the site's own loadVideoPlayer function (scroll trigger)
+                if (typeof loadVideoPlayer === 'function') { loadVideoPlayer(); }
+
+                // Method 2: set iframe src directly from data-src
+                var iframe = document.querySelector('iframe[name="player_iframe"]');
+                if (iframe) {
+                    var src = iframe.getAttribute('data-src') || iframe.getAttribute('src');
+                    if (src && src.indexOf('video_player') > -1) { iframe.src = src; }
                 }
-                // Force all lazy-loaded iframes to load immediately
-                function triggerIframes() {
-                    document.querySelectorAll('iframe[data-src]').forEach(function(f) {
-                        if (!f.src || f.src === '' || f.src === window.location.href)
-                            f.src = f.getAttribute('data-src');
-                    });
-                }
-                triggerIframes();
-                window.scrollTo(0, 400);
-                setTimeout(triggerIframes, 1500);
-                setTimeout(triggerIframes, 3000);
+
+                // Method 3: click the first server li (has onclick setting player_iframe.location.href)
+                var li = document.querySelector('ul.tabs-ul li, ul.tabsList li, #watchareaa li');
+                if (li) { li.click(); }
+
+                // Method 4: extract href from li onclick and set directly
+                var lis = document.querySelectorAll('li[onclick*="player_iframe"]');
+                lis.forEach(function(l) {
+                    var match = l.getAttribute('onclick').match(/href\s*=\s*'([^']+)'/);
+                    if (match && iframe) { iframe.src = match[1]; }
+                });
+
+                // Retry after a delay to catch any deferred initialization
+                setTimeout(function() {
+                    if (typeof loadVideoPlayer === 'function') { loadVideoPlayer(); }
+                    var iframe2 = document.querySelector('iframe[name="player_iframe"]');
+                    if (iframe2 && (!iframe2.src || iframe2.src === window.location.href)) {
+                        var s = iframe2.getAttribute('data-src');
+                        if (s) iframe2.src = s;
+                    }
+                }, 2500);
             })();
         """.trimIndent()
 
         try {
             val resolved = WebViewResolver(
-                interceptUrl = Regex("""\.m3u8"""),
+                interceptUrl = Regex("""scdns\.io.*\.m3u8|scdns\.io.*master"""),
+                useOkhttp = false,   // Full WebView for ALL requests — handles CF + ads properly
                 script = triggerJs
             ).resolveUsingWebView(data, referer = mainUrl).first
             val videoUrl = resolved?.url?.toString()
-            if (!videoUrl.isNullOrBlank() && videoUrl.contains(".m3u8")) {
+            if (!videoUrl.isNullOrBlank() && (videoUrl.contains(".m3u8") || videoUrl.contains("scdns"))) {
                 M3u8Helper.generateM3u8(name, videoUrl, referer = data)
                     .toList().forEach(callback)
                 found = true
             }
         } catch (e: Exception) { /* fall through */ }
 
-        // ── Strategy 2: cfKiller fetch for player URL, then WebView on player page ──
+        // ── Strategy 2: Extract player URL, pre-fetch with cfKiller, then WebView ──
         if (!found) {
             try {
                 val doc = fetchDocument(data)
-                val playerUrl = doc.select(
-                    "iframe[name=player_iframe], iframe[data-src*=video_player], " +
-                    "iframe[src*=video_player], [data-src*=video_player]"
-                ).let { it.attr("src").ifBlank { it.attr("data-src") } }.ifBlank {
-                    val scripts = doc.select("script").html()
-                    val m = Regex("""video_player\?player_token=[A-Za-z0-9+/=_\-]{10,}""").find(scripts)
-                    m?.value?.let { token -> "https://${data.substringAfter("//").substringBefore("/")}/$token" }
-                        ?: ""
+                // Try to get the video_player URL from:
+                // a) iframe data-src  b) li onclick attribute  c) inline scripts
+                val playerUrl = doc.select("iframe[name=player_iframe]").let {
+                    it.attr("src").ifBlank { it.attr("data-src") }
+                }.ifBlank {
+                    // Extract from li onclick: onclick="player_iframe.location.href = 'URL'"
+                    val lis = doc.select("li[onclick*=player_iframe], ul.tabs-ul li[onclick]")
+                    val firstLi = lis.firstOrNull()
+                    if (firstLi != null) {
+                        val match = Regex("""href\s*=\s*'([^']+)'""")
+                            .find(firstLi.attr("onclick"))
+                        match?.groupValues?.getOrNull(1) ?: ""
+                    } else ""
                 }.ifBlank { null }
 
                 if (playerUrl != null) {
                     try { fetchDocument(playerUrl) } catch (e: Exception) { } // prime CF cookies
-                    val resolved = WebViewResolver(interceptUrl = Regex("""\.m3u8"""))
-                        .resolveUsingWebView(playerUrl, referer = data).first
+                    val resolved = WebViewResolver(
+                        interceptUrl = Regex("""scdns\.io.*\.m3u8|scdns\.io.*master"""),
+                        useOkhttp = false
+                    ).resolveUsingWebView(playerUrl, referer = data).first
                     val videoUrl = resolved?.url?.toString()
-                    if (!videoUrl.isNullOrBlank() && videoUrl.contains(".m3u8")) {
+                    if (!videoUrl.isNullOrBlank()) {
                         M3u8Helper.generateM3u8(name, videoUrl, referer = playerUrl)
                             .toList().forEach(callback)
                         found = true
@@ -264,4 +286,5 @@ class FaselHDX : MainAPI() {
         return found
     }
 }
+
 
