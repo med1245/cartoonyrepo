@@ -254,7 +254,7 @@ class FaselHDX : MainAPI() {
                 """.trimIndent()
                 
                 val webView = WebViewResolver(
-                    interceptUrl = Regex("""master\.m3u8"""),
+                    interceptUrl = Regex(""".*\.m3u8.*"""),
                     script = triggerJs,
                     useOkhttp = false
                 ).resolveUsingWebView(
