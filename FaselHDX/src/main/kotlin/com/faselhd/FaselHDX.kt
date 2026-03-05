@@ -8,6 +8,7 @@ import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.network.WebViewResolver
+import com.lagradost.nicehttp.requestCreator
 import org.jsoup.nodes.Element
 
 class FaselHDX : MainAPI() {
@@ -269,11 +270,9 @@ class FaselHDX : MainAPI() {
                 """.trimIndent()
                 
                 val webView = WebViewResolver(
-                    interceptUrl = Regex(""".*\.m3u8.*"""), 
-                    script = triggerJs, 
-                    useOkhttp = false
+                    interceptUrl = Regex(""".*\.m3u8.*""")
                 ).resolveUsingWebView(
-                    finalIframeSrc, referer = mainUrl
+                    requestCreator("GET", finalIframeSrc, referer = mainUrl)
                 ).first
                 
                 val videoUrl = webView?.url?.toString()
@@ -281,7 +280,7 @@ class FaselHDX : MainAPI() {
                     M3u8Helper.generateM3u8(
                         this.name,
                         videoUrl,
-                        referer = mainUrl
+                        referer = finalIframeSrc
                     ).toList().forEach { callback.invoke(it) }
                     found = true
                 }
