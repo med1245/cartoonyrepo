@@ -236,8 +236,27 @@ class FaselHDX : MainAPI() {
         if (iframeSrc != null) {
             try {
                 // Ported from old Arabico provider: direct WebView on the iframe URL
+                // The player requires a user interaction to start downloading M3U8.
+                // We inject JS to force it to play, which triggers the scdns.io request.
+                val triggerJs = """
+                    (function() {
+                        var interval = setInterval(function() {
+                            if (typeof mainPlayer !== 'undefined' && typeof mainPlayer.play === 'function') {
+                                mainPlayer.play();
+                                clearInterval(interval);
+                            } else {
+                                var playBtn = document.querySelector('.jw-icon-display');
+                                if (playBtn) playBtn.click();
+                            }
+                        }, 500);
+                        setTimeout(function(){ clearInterval(interval); }, 5000);
+                    })();
+                """.trimIndent()
+                
                 val webView = WebViewResolver(
-                    Regex("""master\.m3u8""")
+                    interceptUrl = Regex("""master\.m3u8"""),
+                    script = triggerJs,
+                    useOkhttp = false
                 ).resolveUsingWebView(
                     iframeSrc, referer = mainUrl
                 ).first
