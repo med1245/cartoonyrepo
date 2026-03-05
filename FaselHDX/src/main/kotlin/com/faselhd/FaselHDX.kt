@@ -12,7 +12,7 @@ import org.jsoup.nodes.Element
 
 class FaselHDX : MainAPI() {
     override var lang = "ar"
-    override var mainUrl = "https://web340x.faselhdx.bid"
+    override var mainUrl = "https://web350x.faselhdx.bid"
     override var name = "FaselHD"
     override val usesWebView = true
     override val hasMainPage = true
@@ -237,26 +237,34 @@ class FaselHDX : MainAPI() {
             try {
                 // The player iframe frequently redirects between domains (web34x -> fasel-hd.cam -> web35x).
                 // WebViewResolver can struggle with multiple Cloudflare challenges across redirects.
-                // We resolve the final URL first.
+                // We resolve the final URL first to minimize redirects inside the WebView.
                 val iframeDoc = app.get(iframeSrc, referer = mainUrl)
                 val finalIframeSrc = iframeDoc.url
                 
                 val triggerJs = """
                     (function() {
-                        // Prevent ads from redirecting or opening popups
+                        // Aggressive Ad/Redirect Blocking
                         window.open = function() { return null; };
-                        var originalFetch = window.fetch;
+                        window.onbeforeunload = function() { return null; };
                         
+                        // Prevent ads from changing the page location
+                        var currentLoc = window.location.href;
+                        Object.defineProperty(window, 'location', {
+                            configurable: false,
+                            get: function() { return { href: currentLoc, assign: function(){}, replace: function(){} }; }
+                        });
+
                         var interval = setInterval(function() {
                             if (typeof mainPlayer !== 'undefined' && typeof mainPlayer.play === 'function') {
-                                mainPlayer.play();
+                                try { mainPlayer.play(); } catch(e) {}
                                 clearInterval(interval);
                             } else {
-                                var playBtn = document.querySelector('.jw-icon-display, .play-button, .jw-icon');
+                                // Try clicking various common play button selectors
+                                var playBtn = document.querySelector('.jw-icon-display, .play-button, .jw-icon, .vjs-big-play-button');
                                 if (playBtn) playBtn.click();
                             }
                         }, 500);
-                        setTimeout(function(){ clearInterval(interval); }, 5000);
+                        setTimeout(function(){ clearInterval(interval); }, 8000);
                     })();
                 """.trimIndent()
                 
