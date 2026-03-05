@@ -232,20 +232,27 @@ class FaselHDX : MainAPI() {
                 match?.groupValues?.getOrNull(1) ?: ""
             } else ""
         }.ifBlank { null }
-
+        
         if (iframeSrc != null) {
             try {
-                // Ported from old Arabico provider: direct WebView on the iframe URL
-                // The player requires a user interaction to start downloading M3U8.
-                // We inject JS to force it to play, which triggers the scdns.io request.
+                // The player iframe frequently redirects between domains (web34x -> fasel-hd.cam -> web35x).
+                // WebViewResolver can struggle with multiple Cloudflare challenges across redirects.
+                // We resolve the final URL first.
+                val iframeDoc = app.get(iframeSrc, referer = mainUrl)
+                val finalIframeSrc = iframeDoc.url
+                
                 val triggerJs = """
                     (function() {
+                        // Prevent ads from redirecting or opening popups
+                        window.open = function() { return null; };
+                        var originalFetch = window.fetch;
+                        
                         var interval = setInterval(function() {
                             if (typeof mainPlayer !== 'undefined' && typeof mainPlayer.play === 'function') {
                                 mainPlayer.play();
                                 clearInterval(interval);
                             } else {
-                                var playBtn = document.querySelector('.jw-icon-display');
+                                var playBtn = document.querySelector('.jw-icon-display, .play-button, .jw-icon');
                                 if (playBtn) playBtn.click();
                             }
                         }, 500);
@@ -254,11 +261,11 @@ class FaselHDX : MainAPI() {
                 """.trimIndent()
                 
                 val webView = WebViewResolver(
-                    interceptUrl = Regex(""".*\.m3u8.*"""),
-                    script = triggerJs,
+                    interceptUrl = Regex(""".*\.m3u8.*"""), 
+                    script = triggerJs, 
                     useOkhttp = false
                 ).resolveUsingWebView(
-                    iframeSrc, referer = mainUrl
+                    finalIframeSrc, referer = mainUrl
                 ).first
                 
                 val videoUrl = webView?.url?.toString()
