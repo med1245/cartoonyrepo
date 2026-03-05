@@ -190,95 +190,66 @@ class FaselHDX : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        var doc = app.get(data).document
+        if(doc.select("title").text() == "Just a moment...") {
+            doc = app.get(data, interceptor = cfKiller).document
+        }
+
         var found = false
 
-        // ── Strategy 1: WebView on movie page with targeted JS ─────────────────
-        // Exact mechanism discovered via browser inspection:
-        // - The player iframe has a scroll-triggered loadVideoPlayer() function
-        // - Server buttons are <li onclick="player_iframe.location.href = '...'">
-        //   inside ul.tabs-ul — click the <li>, not the <a> inside it
-        // - useOkhttp=false lets WebView handle ALL requests (incl. CF challenges + ads)
-        // - Regex targets scdns.io specifically to avoid intercepting ad streams
-        val triggerJs = """
-            (function() {
-                // Method 1: call the site's own loadVideoPlayer function (scroll trigger)
-                if (typeof loadVideoPlayer === 'function') { loadVideoPlayer(); }
-
-                // Method 2: set iframe src directly from data-src
-                var iframe = document.querySelector('iframe[name="player_iframe"]');
-                if (iframe) {
-                    var src = iframe.getAttribute('data-src') || iframe.getAttribute('src');
-                    if (src && src.indexOf('video_player') > -1) { iframe.src = src; }
-                }
-
-                // Method 3: click the first server li (has onclick setting player_iframe.location.href)
-                var li = document.querySelector('ul.tabs-ul li, ul.tabsList li, #watchareaa li');
-                if (li) { li.click(); }
-
-                // Method 4: extract href from li onclick and set directly
-                var lis = document.querySelectorAll('li[onclick*="player_iframe"]');
-                lis.forEach(function(l) {
-                    var match = l.getAttribute('onclick').match(/href\s*=\s*'([^']+)'/);
-                    if (match && iframe) { iframe.src = match[1]; }
-                });
-
-                // Retry after a delay to catch any deferred initialization
-                setTimeout(function() {
-                    if (typeof loadVideoPlayer === 'function') { loadVideoPlayer(); }
-                    var iframe2 = document.querySelector('iframe[name="player_iframe"]');
-                    if (iframe2 && (!iframe2.src || iframe2.src === window.location.href)) {
-                        var s = iframe2.getAttribute('data-src');
-                        if (s) iframe2.src = s;
-                    }
-                }, 2500);
-            })();
-        """.trimIndent()
-
-        try {
-            val resolved = WebViewResolver(
-                interceptUrl = Regex("""scdns\.io.*\.m3u8|scdns\.io.*master"""),
-                useOkhttp = false,   // Full WebView for ALL requests — handles CF + ads properly
-                script = triggerJs
-            ).resolveUsingWebView(data, referer = mainUrl).first
-            val videoUrl = resolved?.url?.toString()
-            if (!videoUrl.isNullOrBlank() && (videoUrl.contains(".m3u8") || videoUrl.contains("scdns"))) {
-                M3u8Helper.generateM3u8(name, videoUrl, referer = data)
-                    .toList().forEach(callback)
-                found = true
-            }
-        } catch (e: Exception) { /* fall through */ }
-
-        // ── Strategy 2: Extract player URL, pre-fetch with cfKiller, then WebView ──
-        if (!found) {
+        // 1. Get Download Link (Ported from old Arabico provider)
+        val downloadUrl = doc.select(".downloadLinks a, .dl-links a").attr("href")
+        if (downloadUrl.isNotBlank()) {
             try {
-                val doc = fetchDocument(data)
-                // Try to get the video_player URL from:
-                // a) iframe data-src  b) li onclick attribute  c) inline scripts
-                val playerUrl = doc.select("iframe[name=player_iframe]").let {
-                    it.attr("src").ifBlank { it.attr("data-src") }
-                }.ifBlank {
-                    // Extract from li onclick: onclick="player_iframe.location.href = 'URL'"
-                    val lis = doc.select("li[onclick*=player_iframe], ul.tabs-ul li[onclick]")
-                    val firstLi = lis.firstOrNull()
-                    if (firstLi != null) {
-                        val match = Regex("""href\s*=\s*'([^']+)'""")
-                            .find(firstLi.attr("onclick"))
-                        match?.groupValues?.getOrNull(1) ?: ""
-                    } else ""
-                }.ifBlank { null }
+                // The old provider does a POST request to the download page to get the direct link
+                val playerDoc = app.post(downloadUrl, interceptor = cfKiller, referer = mainUrl, timeout = 120).document
+                val directLink = playerDoc.select("div.dl-link a").attr("href")
+                if (directLink.isNotBlank()) {
+                    callback.invoke(
+                        ExtractorLink(
+                            this.name,
+                            this.name + " Download Source",
+                            directLink,
+                            this.mainUrl,
+                            Qualities.Unknown.value,
+                            directLink.contains(".m3u8")
+                        )
+                    )
+                    found = true
+                }
+            } catch (e: Exception) { /* ignore */ }
+        }
 
-                if (playerUrl != null) {
-                    try { fetchDocument(playerUrl) } catch (e: Exception) { } // prime CF cookies
-                    val resolved = WebViewResolver(
-                        interceptUrl = Regex("""scdns\.io.*\.m3u8|scdns\.io.*master"""),
-                        useOkhttp = false
-                    ).resolveUsingWebView(playerUrl, referer = data).first
-                    val videoUrl = resolved?.url?.toString()
-                    if (!videoUrl.isNullOrBlank()) {
-                        M3u8Helper.generateM3u8(name, videoUrl, referer = playerUrl)
-                            .toList().forEach(callback)
-                        found = true
-                    }
+        // 2. Get Iframe Link
+        // The new domain hides the iframe src in data-src or in the li onclick
+        val iframeSrc = doc.select("iframe[name=player_iframe]").let {
+            it.attr("src").ifBlank { it.attr("data-src") }
+        }.ifBlank {
+            val lis = doc.select("li[onclick*=player_iframe], ul.tabs-ul li[onclick]")
+            val firstLi = lis.firstOrNull()
+            if (firstLi != null) {
+                val match = Regex("""href\s*=\s*'([^']+)'""").find(firstLi.attr("onclick"))
+                match?.groupValues?.getOrNull(1) ?: ""
+            } else ""
+        }.ifBlank { null }
+
+        if (iframeSrc != null) {
+            try {
+                // Ported from old Arabico provider: direct WebView on the iframe URL
+                val webView = WebViewResolver(
+                    Regex("""master\.m3u8""")
+                ).resolveUsingWebView(
+                    iframeSrc, referer = mainUrl
+                ).first
+                
+                val videoUrl = webView?.url?.toString()
+                if (!videoUrl.isNullOrBlank()) {
+                    M3u8Helper.generateM3u8(
+                        this.name,
+                        videoUrl,
+                        referer = mainUrl
+                    ).toList().forEach { callback.invoke(it) }
+                    found = true
                 }
             } catch (e: Exception) { /* ignore */ }
         }
