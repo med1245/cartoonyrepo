@@ -7,7 +7,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.network.CloudflareKiller
-import com.lagradost.nicehttp.requestCreator
 import com.lagradost.cloudstream3.network.WebViewResolver
 import org.jsoup.nodes.Element
 
@@ -193,48 +192,71 @@ class FaselHDX : MainAPI() {
     ): Boolean {
         var found = false
 
-        // Step 1: Get the /video_player?player_token=... URL from the movie page.
-        // The iframe is lazy-loaded (data-src) and JW Player only starts when visible.
-        // Targeting the player page directly ensures JW Player auto-inits immediately.
-        var playerPageUrl: String? = null
-        try {
-            val doc = fetchDocument(data)
-            playerPageUrl = doc.select("iframe[name=player_iframe]").let {
-                it.attr("src").ifBlank { it.attr("data-src") }
-            }.ifBlank {
-                doc.select("[data-src*=video_player], [src*=video_player]").let {
-                    it.attr("src").ifBlank { it.attr("data-src") }
+        // ── Strategy 1: WebView on movie page + JS to trigger server button ──────
+        // The iframe src is set ONLY when user clicks "Viewing Server #01".
+        // Inject JS that auto-clicks that button + forces all data-src iframes to load.
+        val triggerJs = """
+            (function() {
+                // Click the first server/watch button
+                var selectors = [
+                    '.watchServersContainer a', '.serverButton', '.server-item',
+                    '[class*="server"] a', '.watchSel', 'div.episodeNum a'
+                ];
+                for (var i = 0; i < selectors.length; i++) {
+                    var el = document.querySelector(selectors[i]);
+                    if (el) { el.click(); break; }
                 }
-            }.ifBlank { null }
+                // Force all lazy-loaded iframes to load immediately
+                function triggerIframes() {
+                    document.querySelectorAll('iframe[data-src]').forEach(function(f) {
+                        if (!f.src || f.src === '' || f.src === window.location.href)
+                            f.src = f.getAttribute('data-src');
+                    });
+                }
+                triggerIframes();
+                window.scrollTo(0, 400);
+                setTimeout(triggerIframes, 1500);
+                setTimeout(triggerIframes, 3000);
+            })();
+        """.trimIndent()
+
+        try {
+            val resolved = WebViewResolver(
+                interceptUrl = Regex("""\.m3u8"""),
+                script = triggerJs
+            ).resolveUsingWebView(data, referer = mainUrl).first
+            val videoUrl = resolved?.url?.toString()
+            if (!videoUrl.isNullOrBlank() && videoUrl.contains(".m3u8")) {
+                M3u8Helper.generateM3u8(name, videoUrl, referer = data)
+                    .toList().forEach(callback)
+                found = true
+            }
         } catch (e: Exception) { /* fall through */ }
 
-        // Step 2: WebView on the video_player page — JW Player starts instantly here,
-        // fires the scdns.io M3U8 network request which we intercept.
-        if (playerPageUrl != null) {
-            try {
-                val resolved = WebViewResolver(Regex("""\.m3u8"""))
-                    .resolveUsingWebView(requestCreator("GET", playerPageUrl, referer = data))
-                    .first
-                val videoUrl = resolved?.url?.toString()
-                if (!videoUrl.isNullOrBlank() && videoUrl.contains(".m3u8")) {
-                    M3u8Helper.generateM3u8(name, videoUrl, referer = playerPageUrl)
-                        .toList().forEach(callback)
-                    found = true
-                }
-            } catch (e: Exception) { /* fall through */ }
-        }
-
-        // Step 3: Fallback — WebView on the movie page itself.
+        // ── Strategy 2: cfKiller fetch for player URL, then WebView on player page ──
         if (!found) {
             try {
-                val resolved = WebViewResolver(Regex("""\.m3u8"""))
-                    .resolveUsingWebView(requestCreator("GET", data, referer = mainUrl))
-                    .first
-                val videoUrl = resolved?.url?.toString()
-                if (!videoUrl.isNullOrBlank() && videoUrl.contains(".m3u8")) {
-                    M3u8Helper.generateM3u8(name, videoUrl, referer = data)
-                        .toList().forEach(callback)
-                    found = true
+                val doc = fetchDocument(data)
+                val playerUrl = doc.select(
+                    "iframe[name=player_iframe], iframe[data-src*=video_player], " +
+                    "iframe[src*=video_player], [data-src*=video_player]"
+                ).let { it.attr("src").ifBlank { it.attr("data-src") } }.ifBlank {
+                    val scripts = doc.select("script").html()
+                    val m = Regex("""video_player\?player_token=[A-Za-z0-9+/=_\-]{10,}""").find(scripts)
+                    m?.value?.let { token -> "https://${data.substringAfter("//").substringBefore("/")}/$token" }
+                        ?: ""
+                }.ifBlank { null }
+
+                if (playerUrl != null) {
+                    try { fetchDocument(playerUrl) } catch (e: Exception) { } // prime CF cookies
+                    val resolved = WebViewResolver(interceptUrl = Regex("""\.m3u8"""))
+                        .resolveUsingWebView(playerUrl, referer = data).first
+                    val videoUrl = resolved?.url?.toString()
+                    if (!videoUrl.isNullOrBlank() && videoUrl.contains(".m3u8")) {
+                        M3u8Helper.generateM3u8(name, videoUrl, referer = playerUrl)
+                            .toList().forEach(callback)
+                        found = true
+                    }
                 }
             } catch (e: Exception) { /* ignore */ }
         }
