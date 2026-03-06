@@ -215,84 +215,99 @@ class FaselHDX : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Fetch the movie page — use cfKiller so we get valid CF cookies
-        var doc = app.get(data, interceptor = cfKiller).document
+        // Fetch the movie page to get the IMDB ID
+        val doc = app.get(data, interceptor = cfKiller).document
+
+        // ── Extract IMDB ID ──────────────────────────────────────────────────
+        // FaselHD pages link to IMDB (e.g. href="https://www.imdb.com/title/tt0390384/")
+        val imdbLink = doc.select("a[href*=imdb.com/title/]").attr("href")
+        val imdbId = Regex("""tt\d+""").find(imdbLink)?.value
+
+        if (imdbId.isNullOrBlank()) return false
+
+        // Determine if series episode from data URL
+        // Data format for episodes: "https://domain/path|season|episode"
+        val parts   = data.split("|")
+        val season  = if (parts.size > 1) parts[1].toIntOrNull() ?: 0 else 0
+        val episode = if (parts.size > 2) parts[2].toIntOrNull() ?: 0 else 0
+        val isMovie = season == 0
+
+        // ── Strategy: vidsrc.to embed ─────────────────────────────────────────
+        // vidsrc.to provides free embeds by IMDB ID. 
+        // The WebViewResolver intercepts the M3U8/MP4 network request.
+        val vidsrcUrl = if (isMovie) {
+            "https://vidsrc.to/embed/movie/$imdbId"
+        } else {
+            "https://vidsrc.to/embed/tv/$imdbId/$season/$episode"
+        }
 
         var found = false
 
-        // ── Strategy 1: Download link (T7MEEL) ──────────────────────────────
-        val downloadUrl = doc.select(".downloadLinks a").attr("href")
-        if (downloadUrl.isNotBlank()) {
-            try {
-                val playerDoc = app.post(downloadUrl, interceptor = cfKiller, referer = mainUrl, timeout = 120).document
-                val directLink = playerDoc.select("div.dl-link a").attr("href")
-                if (directLink.isNotBlank()) {
-                    callback.invoke(
-                        ExtractorLink(
-                            this.name,
-                            this.name + " T7MEEL",
-                            directLink,
-                            this.mainUrl,
-                            Qualities.Unknown.value,
-                            directLink.contains(".m3u8")
-                        )
-                    )
-                    found = true
-                }
-            } catch (e: Exception) { /* ignore */ }
-        }
+        try {
+            val webView = WebViewResolver(
+                interceptUrl = Regex(""".*\.(m3u8|mp4).*""")
+            ).resolveUsingWebView(
+                requestCreator("GET", vidsrcUrl, referer = "https://vidsrc.to/")
+            ).first
 
-        // ── Strategy 2: Iframe WebView ───────────────────────────────────────
-        // The video_player iframe src is present in the HTML.
-        // The player uses obfuscated JS to build a signed scdns.io M3U8 URL at runtime.
-        // We must let a WebView execute the JS and intercept the network request.
-        val iframeSrc = doc.select("iframe[name=player_iframe]").let {
-            it.attr("src").ifBlank { it.attr("data-src") }
-        }.ifBlank { null }
-
-        if (iframeSrc != null) {
-            try {
-                // Get cookies from the CF session so the video_player page loads correctly
-                val cfCookies = cfKiller.getCookieHeaders(mainUrl).toMap()
-                val cookieStr = cfCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-
-                val triggerJs = """
-                    (function() {
-                        // Block ads from redirecting the page
-                        window.open = function() { return null; };
-                        window.onbeforeunload = function() { return null; };
-                        // Auto-click play when JW Player is ready
-                        var t = setInterval(function() {
-                            if (typeof mainPlayer !== 'undefined' && typeof mainPlayer.play === 'function') {
-                                try { mainPlayer.play(); } catch(e) {}
-                                clearInterval(t);
-                            }
-                            var btn = document.querySelector('.jw-icon-display,.jw-icon,.play-button,.vjs-big-play-button');
-                            if (btn) { btn.click(); }
-                        }, 300);
-                        setTimeout(function(){ clearInterval(t); }, 15000);
-                    })();
-                """.trimIndent()
-
-                val request = requestCreator(
-                    "GET",
-                    iframeSrc,
-                    referer = mainUrl,
-                    headers = if (cookieStr.isNotBlank()) mapOf("Cookie" to cookieStr) else emptyMap()
-                )
-
-                val webView = WebViewResolver(
-                    interceptUrl = Regex(""".*scdns\.io.*\.m3u8.*"""),
-                    script = triggerJs
-                ).resolveUsingWebView(request).first
-
-                val videoUrl = webView?.url?.toString()
-                if (!videoUrl.isNullOrBlank()) {
+            val videoUrl = webView?.url?.toString()
+            if (!videoUrl.isNullOrBlank()) {
+                val isM3u8 = videoUrl.contains(".m3u8")
+                if (isM3u8) {
                     M3u8Helper.generateM3u8(
                         this.name,
                         videoUrl,
-                        referer = iframeSrc
+                        referer = vidsrcUrl
                     ).toList().forEach { callback.invoke(it) }
+                } else {
+                    callback.invoke(
+                        ExtractorLink(
+                            this.name,
+                            this.name,
+                            videoUrl,
+                            vidsrcUrl,
+                            Qualities.Unknown.value,
+                            false
+                        )
+                    )
+                }
+                found = true
+            }
+        } catch (e: Exception) { /* ignore */ }
+
+        // ── Fallback: vidsrc.me embed ─────────────────────────────────────────
+        if (!found) {
+            try {
+                val vidsrcMeUrl = if (isMovie) {
+                    "https://vidsrc.me/embed/movie?imdb=$imdbId"
+                } else {
+                    "https://vidsrc.me/embed/tv?imdb=$imdbId&season=$season&episode=$episode"
+                }
+
+                val webView2 = WebViewResolver(
+                    interceptUrl = Regex(""".*\.(m3u8|mp4).*""")
+                ).resolveUsingWebView(
+                    requestCreator("GET", vidsrcMeUrl, referer = "https://vidsrc.me/")
+                ).first
+
+                val videoUrl2 = webView2?.url?.toString()
+                if (!videoUrl2.isNullOrBlank()) {
+                    val isM3u8 = videoUrl2.contains(".m3u8")
+                    if (isM3u8) {
+                        M3u8Helper.generateM3u8(
+                            this.name,
+                            videoUrl2,
+                            referer = vidsrcMeUrl
+                        ).toList().forEach { callback.invoke(it) }
+                    } else {
+                        callback.invoke(
+                            ExtractorLink(
+                                this.name, this.name,
+                                videoUrl2, vidsrcMeUrl,
+                                Qualities.Unknown.value, false
+                            )
+                        )
+                    }
                     found = true
                 }
             } catch (e: Exception) { /* ignore */ }
@@ -301,6 +316,5 @@ class FaselHDX : MainAPI() {
         return found
     }
 }
-
 
 
