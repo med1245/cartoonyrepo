@@ -13,7 +13,15 @@ import org.jsoup.nodes.Element
 
 class FaselHDX : MainAPI() {
     override var lang = "ar"
-    override var mainUrl = "https://web350x.faselhdx.bid"
+    // Domain rotates frequently (web340x -> web350x -> web360x -> ...).
+    // We use a known base and follow the redirect at first request.
+    override var mainUrl = "https://web360x.faselhdx.bid"
+    private val knownDomains = listOf(
+        "https://web360x.faselhdx.bid",
+        "https://web350x.faselhdx.bid",
+        "https://web340x.faselhdx.bid",
+        "https://www.fasel-hd.cam"
+    )
     override var name = "FaselHD"
     override val usesWebView = true
     override val hasMainPage = true
@@ -25,6 +33,22 @@ class FaselHDX : MainAPI() {
     )
 
     private val cfKiller = CloudflareKiller()
+
+    // Auto-detect the working domain by checking which one responds
+    private suspend fun getWorkingUrl(): String {
+        for (domain in knownDomains) {
+            try {
+                val r = app.get(domain, timeout = 10)
+                // Follow any redirect; if we get a 200 or 301/302 to a valid page, use the final URL's host
+                val finalUrl = r.url.substringBefore("/", "").let {
+                    if (r.url.startsWith("http")) r.url.split("/").take(3).joinToString("/")
+                    else domain
+                }
+                if (r.code in 200..399) return finalUrl
+            } catch (e: Exception) { continue }
+        }
+        return mainUrl
+    }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
