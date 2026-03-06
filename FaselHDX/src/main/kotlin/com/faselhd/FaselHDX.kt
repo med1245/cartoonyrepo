@@ -294,7 +294,8 @@ class FaselHDX : MainAPI() {
                 """.trimIndent()
                 
                 val webView = WebViewResolver(
-                    interceptUrl = Regex(""".*\.m3u8.*""")
+                    interceptUrl = Regex(""".*scdns\.io.*\.m3u8.*"""),
+                    script = triggerJs
                 ).resolveUsingWebView(
                     requestCreator("GET", finalIframeSrc, referer = mainUrl)
                 ).first
