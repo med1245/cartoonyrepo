@@ -24,16 +24,15 @@ class AnimeZidProvider : MainAPI() {
 
     // ── Main Page Categories ───────────────────────────────────────────────────
     override val mainPage = mainPageOf(
+        "$mainUrl/topvideos.php"                          to "الأكثر مشاهدة",
         "$mainUrl/newvideos.php"                          to "الأحدث إضافة",
+        "$mainUrl/category.php?cat=new-series-eps"        to "أحدث الحلقات",
         "$mainUrl/category.php?cat=anime"                 to "أنمي",
         "$mainUrl/category.php?cat=movies"                to "أفلام أنمي",
         "$mainUrl/category.php?cat=series"                to "مسلسلات",
         "$mainUrl/category.php?cat=disney-masr"           to "ديزني مصر",
-        "$mainUrl/category.php?cat=spacetoon"             to "سبيستون",
-        "$mainUrl/topvideos.php?filter=views"             to "الأكثر مشاهدة",
-        "$mainUrl/topvideos.php?filter=rating"            to "الأعلى تقييماً",
-        "$mainUrl/topvideos.php?filter=year&year=2024"    to "إصدار 2024",
-        "$mainUrl/topvideos.php?filter=genre&genre=action" to "أكشن"
+        "$mainUrl/category.php?cat=subbed-animation"      to "أنيميشن مترجمة",
+        "$mainUrl/category.php?cat=spacetoon"             to "سبيستون"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -109,7 +108,7 @@ class AnimeZidProvider : MainAPI() {
         }
 
         val seasonTabs = doc.select("ul.nav.nav-tabs li a")
-        val episodesList = doc.select(".pm-episode-link, a[href*='watch.php?vid=']")
+        val episodesList = doc.select(".tab-episodes a, .SeasonsEpisodes a")
             .filter { it.text().contains("الحلقة") || it.text().contains("حلقة") }
         
         val isSeries = seasonTabs.isNotEmpty() || (episodesList.isNotEmpty() && !fullTitle.startsWith("فيلم"))
@@ -123,7 +122,7 @@ class AnimeZidProvider : MainAPI() {
 
         return if (isSeries) {
             val episodes = mutableListOf<Episode>()
-            doc.select(".pm-episode-link, a[href*='watch.php?vid=']").forEach { ep ->
+            doc.select(".tab-episodes a, .SeasonsEpisodes a").forEach { ep ->
                 val epHref = ep.absUrl("href")
                 val name = ep.text().trim()
                 if (name.contains("الحلقة") || name.contains("حلقة")) {
@@ -182,20 +181,8 @@ class AnimeZidProvider : MainAPI() {
 
         playDoc.select("a.btn.g.dl.show_dl.api").forEach { dl ->
             val link = dl.attr("href")
-            val qualityText = dl.select("span").firstOrNull()?.text()?.trim() ?: "Download"
-            val hostName = dl.select("span").getOrNull(1)?.text()?.trim() ?: "Link"
             if (link.isNotBlank() && link.startsWith("http")) {
-                callback.invoke(
-                    ExtractorLink(
-                        source = "$name Download",
-                        name = "$hostName ($qualityText)",
-                        url = link,
-                        referer = playUrl,
-                        quality = Qualities.Unknown.value,
-                        isM3u8 = false
-                    )
-                )
-                found = true
+                iframeSrcs.add(link) // Add hoster link to list, handled natively by loadExtractor
             }
         }
 

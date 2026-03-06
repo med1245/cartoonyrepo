@@ -1,4 +1,4 @@
-version = 5
+version = 6
 
 cloudstream {
     description = "أنمي بالعربي - أفلام ومسلسلات الأنمي من animezid.cam"
