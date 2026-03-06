@@ -215,25 +215,22 @@ class FaselHDX : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        var doc = app.get(data).document
-        if(doc.select("title").text() == "Just a moment...") {
-            doc = app.get(data, interceptor = cfKiller).document
-        }
+        // Fetch the movie page — use cfKiller so we get valid CF cookies
+        var doc = app.get(data, interceptor = cfKiller).document
 
         var found = false
 
-        // 1. Get Download Link (Ported from old Arabico provider)
-        val downloadUrl = doc.select(".downloadLinks a, .dl-links a").attr("href")
+        // ── Strategy 1: Download link (T7MEEL) ──────────────────────────────
+        val downloadUrl = doc.select(".downloadLinks a").attr("href")
         if (downloadUrl.isNotBlank()) {
             try {
-                // The old provider does a POST request to the download page to get the direct link
                 val playerDoc = app.post(downloadUrl, interceptor = cfKiller, referer = mainUrl, timeout = 120).document
                 val directLink = playerDoc.select("div.dl-link a").attr("href")
                 if (directLink.isNotBlank()) {
                     callback.invoke(
                         ExtractorLink(
                             this.name,
-                            this.name + " Download Source",
+                            this.name + " T7MEEL",
                             directLink,
                             this.mainUrl,
                             Qualities.Unknown.value,
@@ -245,67 +242,56 @@ class FaselHDX : MainAPI() {
             } catch (e: Exception) { /* ignore */ }
         }
 
-        // 2. Get Iframe Link
-        // The new domain hides the iframe src in data-src or in the li onclick
+        // ── Strategy 2: Iframe WebView ───────────────────────────────────────
+        // The video_player iframe src is present in the HTML.
+        // The player uses obfuscated JS to build a signed scdns.io M3U8 URL at runtime.
+        // We must let a WebView execute the JS and intercept the network request.
         val iframeSrc = doc.select("iframe[name=player_iframe]").let {
             it.attr("src").ifBlank { it.attr("data-src") }
-        }.ifBlank {
-            val lis = doc.select("li[onclick*=player_iframe], ul.tabs-ul li[onclick]")
-            val firstLi = lis.firstOrNull()
-            if (firstLi != null) {
-                val match = Regex("""href\s*=\s*'([^']+)'""").find(firstLi.attr("onclick"))
-                match?.groupValues?.getOrNull(1) ?: ""
-            } else ""
         }.ifBlank { null }
-        
+
         if (iframeSrc != null) {
             try {
-                // The player iframe frequently redirects between domains (web34x -> fasel-hd.cam -> web35x).
-                // WebViewResolver can struggle with multiple Cloudflare challenges across redirects.
-                // We resolve the final URL first to minimize redirects inside the WebView.
-                val iframeDoc = app.get(iframeSrc, referer = mainUrl)
-                val finalIframeSrc = iframeDoc.url
-                
+                // Get cookies from the CF session so the video_player page loads correctly
+                val cfCookies = cfKiller.getCookieHeaders(mainUrl).toMap()
+                val cookieStr = cfCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+
                 val triggerJs = """
                     (function() {
-                        // Aggressive Ad/Redirect Blocking
+                        // Block ads from redirecting the page
                         window.open = function() { return null; };
                         window.onbeforeunload = function() { return null; };
-                        
-                        // Prevent ads from changing the page location
-                        var currentLoc = window.location.href;
-                        Object.defineProperty(window, 'location', {
-                            configurable: false,
-                            get: function() { return { href: currentLoc, assign: function(){}, replace: function(){} }; }
-                        });
-
-                        var interval = setInterval(function() {
+                        // Auto-click play when JW Player is ready
+                        var t = setInterval(function() {
                             if (typeof mainPlayer !== 'undefined' && typeof mainPlayer.play === 'function') {
                                 try { mainPlayer.play(); } catch(e) {}
-                                clearInterval(interval);
-                            } else {
-                                // Try clicking various common play button selectors
-                                var playBtn = document.querySelector('.jw-icon-display, .play-button, .jw-icon, .vjs-big-play-button');
-                                if (playBtn) playBtn.click();
+                                clearInterval(t);
                             }
-                        }, 500);
-                        setTimeout(function(){ clearInterval(interval); }, 8000);
+                            var btn = document.querySelector('.jw-icon-display,.jw-icon,.play-button,.vjs-big-play-button');
+                            if (btn) { btn.click(); }
+                        }, 300);
+                        setTimeout(function(){ clearInterval(t); }, 15000);
                     })();
                 """.trimIndent()
-                
+
+                val request = requestCreator(
+                    "GET",
+                    iframeSrc,
+                    referer = mainUrl,
+                    headers = if (cookieStr.isNotBlank()) mapOf("Cookie" to cookieStr) else emptyMap()
+                )
+
                 val webView = WebViewResolver(
                     interceptUrl = Regex(""".*scdns\.io.*\.m3u8.*"""),
                     script = triggerJs
-                ).resolveUsingWebView(
-                    requestCreator("GET", finalIframeSrc, referer = mainUrl)
-                ).first
-                
+                ).resolveUsingWebView(request).first
+
                 val videoUrl = webView?.url?.toString()
                 if (!videoUrl.isNullOrBlank()) {
                     M3u8Helper.generateM3u8(
                         this.name,
                         videoUrl,
-                        referer = finalIframeSrc
+                        referer = iframeSrc
                     ).toList().forEach { callback.invoke(it) }
                     found = true
                 }
@@ -315,5 +301,6 @@ class FaselHDX : MainAPI() {
         return found
     }
 }
+
 
 
