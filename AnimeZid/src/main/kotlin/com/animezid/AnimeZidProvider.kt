@@ -22,7 +22,7 @@ class AnimeZidProvider : MainAPI() {
         TvType.Movie
     )
 
-    // ── Main Page Categories (mirror the site's navigation) ───────────────────
+    // ── Main Page Categories ───────────────────────────────────────────────────
     override val mainPage = mainPageOf(
         "$mainUrl/newvideos.php"                          to "الأحدث إضافة",
         "$mainUrl/category.php?cat=anime"                 to "أنمي",
@@ -40,11 +40,9 @@ class AnimeZidProvider : MainAPI() {
         val url = if (page == 1) request.data else "${request.data}&page=$page"
         val doc = app.get(url).document
         val items = doc.select("a.movie").mapNotNull { it.toSearchResult() }
-            .distinctBy { it.name } // Deduplicate by sanitized title
+            .distinctBy { it.name }
         return newHomePageResponse(request.name, items, hasNext = items.isNotEmpty())
     }
-
-    // ── Search ────────────────────────────────────────────────────────────────
 
     override suspend fun search(query: String): List<SearchResponse> {
         val doc = app.get(
@@ -53,132 +51,105 @@ class AnimeZidProvider : MainAPI() {
         return doc.select("a.movie").mapNotNull { it.toSearchResult() }
     }
 
-    // ── Card helper ───────────────────────────────────────────────────────────
-
     private fun Element.toSearchResult(): SearchResponse? {
         val href  = absUrl("href").ifBlank { return null }
-
-        // Title is in span.title
         val rawTitle = select("span.title").text().trim()
             .ifBlank { select("span").firstOrNull { it.hasClass("title") }?.text()?.trim().orEmpty() }
             .ifBlank { attr("title").trim() }
             .ifBlank { return null }
 
-        // Determine if it's a TV series episode or a movie/special
-        val isEpisode = rawTitle.contains("الحلقة") || rawTitle.contains("حلقة") || rawTitle.contains("موسم") || rawTitle.contains("الموسم")
+        val isMovie = rawTitle.startsWith("فيلم") || rawTitle.contains("فيلم")
+        val isEpisode = rawTitle.contains("الحلقة") || rawTitle.contains("حلقة")
         
-        // Sanitize title for grouping ONLY if it's clearly an episode
         val title = if (isEpisode) {
-            rawTitle
-                .replace(Regex("""\s*الحلقة\s*\d+.*"""), "")
+            rawTitle.replace(Regex("""\s*الحلقة\s*\d+.*"""), "")
                 .replace(Regex("""\s*حلقة\s*\d+.*"""), "")
                 .replace(Regex("""\s*الموسم\s*\d+.*"""), "")
                 .replace(Regex("""\s*موسم\s*\d+.*"""), "")
                 .trim()
-        } else {
-            rawTitle.trim()
-        }
+        } else rawTitle.trim()
 
-        // Images are lazy-loaded: data-src confirmed
-        val img   = select("img").firstOrNull()
-        val poster = (img?.attr("data-src") ?: img?.attr("src") ?: "").let {
+        val img = select("img").firstOrNull()
+        val poster = (img?.attr("data-src") ?: img?.attr("src") ?: "").let { src ->
             when {
-                it.startsWith("http") -> it
-                it.startsWith("/")    -> "$mainUrl$it"
-                it.isNotBlank()       -> "$mainUrl/$it"
+                src.startsWith("http") -> src
+                src.startsWith("/")    -> "$mainUrl$src"
+                src.isNotBlank()       -> "$mainUrl/$src"
                 else -> null
             }
         }
 
-        // Use Movie for things not identified as episodes to prevent unwanted grouping
         return if (isEpisode) {
-            newTvSeriesSearchResponse(title, href, TvType.Anime) {
-                this.posterUrl = poster
-            }
+            newTvSeriesSearchResponse(title, href, TvType.TvSeries) { this.posterUrl = poster }
         } else {
-            newMovieSearchResponse(title, href, TvType.AnimeMovie) {
-                this.posterUrl = poster
-            }
+            newMovieSearchResponse(title, href, TvType.Movie) { this.posterUrl = poster }
         }
     }
 
-    // ── Load (Detail Page) ───────────────────────────────────────────────────
-
     override suspend fun load(url: String): LoadResponse? {
         val doc = app.get(url).document
-
-        // FIXED: Use .movie_title h1 to avoid the "Welcome" generic h1
         val titleSelector = doc.select(".movie_title h1, .movies-title, .entry-title, h2.title, div.title > span")
         val fullTitle = titleSelector.firstOrNull()?.text()?.trim()
             ?: doc.select("meta[property=og:title]").attr("content").trim()
 
-        // Sanitize title for the series object (if it's a series)
-        val title = fullTitle
-            .replace(Regex("""\s*الحلقة\s*\d+.*"""), "")
-            .replace(Regex("""\s*حلقة\s*\d+.*"""), "")
-            .trim()
+        val title = fullTitle.replace(Regex("""\s*الحلقة\s*\d+.*"""), "")
+            .replace(Regex("""\s*حلقة\s*\d+.*"""), "").trim()
 
         val poster = doc.select("meta[property=og:image]").attr("content").ifBlank {
             doc.select("img.movie-img, div.movies-img img, img[itemprop=image]")
                 .firstOrNull()?.let {
-                    (it.attr("data-src").ifBlank { it.attr("src") }).let { src ->
-                        when {
-                            src.startsWith("http") -> src
-                            src.startsWith("/")    -> "$mainUrl$src"
-                            src.isNotBlank()       -> "$mainUrl/$src"
-                            else -> null
-                        }
+                    val src = it.attr("data-src").ifBlank { it.attr("src") }
+                    when {
+                        src.startsWith("http") -> src
+                        src.startsWith("/")    -> "$mainUrl$src"
+                        src.isNotBlank()       -> "$mainUrl/$src"
+                        else -> null
                     }
                 }
         }
 
-        val description = doc.select("meta[property=og:description]").attr("content").ifBlank {
-            doc.select("div.movies-story, div.description, .story").firstOrNull()?.text()?.trim()
-        }
+        val seasonTabs = doc.select("ul.nav.nav-tabs li a")
+        val episodesList = doc.select(".pm-episode-link, a[href*='watch.php?vid=']")
+            .filter { it.text().contains("الحلقة") || it.text().contains("حلقة") }
+        
+        val isSeries = seasonTabs.isNotEmpty() || (episodesList.isNotEmpty() && !fullTitle.startsWith("فيلم"))
 
-        val tags = doc.select("a[href*='topvideos.php?filter=genre'], a[href*='cat=']")
-            .map { it.text().trim() }.filter { it.isNotBlank() }
+        val descriptionArr = doc.select("div.pm-video-description, #video-details, .story, meta[property=og:description], .description")
+        val description = descriptionArr.firstOrNull { it.text().isNotBlank() }?.text()?.trim()
+            ?: descriptionArr.attr("content").trim()
 
-        // ── Episode links ────────────────────────────────────────────────────
-        // Every episode page has a list of ALL episodes in that series.
-        val episodeElements = doc.select("a[href*='watch.php?vid='], a[href*='?vid=']")
-            .filter { el ->
-                val t = el.text()
-                t.contains("حلقة") || t.contains("فيلم") || el.attr("href").contains("vid=")
-            }.distinctBy { it.attr("href") }
+        val tags = doc.select("div.pm-video-category a, .video-tags a, a[href*='topvideos.php?filter=genre'], a[href*='cat=']")
+            .map { it.text().trim() }.filter { it.isNotBlank() }.distinct()
 
-        return if (episodeElements.isNotEmpty()) {
-            val episodes = episodeElements.mapIndexed { index, el ->
-                val epHref = el.absUrl("href").ifBlank { "$mainUrl/${el.attr("href")}" }
-                val epName = el.text().trim().ifBlank { "حلقة ${index + 1}" }
-
-                val seasonNum  = Regex("""(?:الموسم|موسم)\s*(\d+)""").find(epName)
-                    ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
-                val episodeNum = Regex("""(?:الحلقة|حلقة)\s*(\d+)""").find(epName)
-                    ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: (index + 1)
-
-                newEpisode(epHref) {
-                    this.name    = epName
-                    this.season  = seasonNum
-                    this.episode = episodeNum
+        return if (isSeries) {
+            val episodes = mutableListOf<Episode>()
+            doc.select(".pm-episode-link, a[href*='watch.php?vid=']").forEach { ep ->
+                val epHref = ep.absUrl("href")
+                val name = ep.text().trim()
+                if (name.contains("الحلقة") || name.contains("حلقة")) {
+                    val epNum = Regex("""(\d+)""").find(name)?.groupValues?.get(1)?.toIntOrNull()
+                    episodes.add(newEpisode(epHref) {
+                        this.name = name
+                        this.episode = epNum
+                    })
                 }
-            }.sortedWith(compareBy({ it.season }, { it.episode }))
-
-            newTvSeriesLoadResponse(title, url, TvType.Anime, episodes) {
-                this.posterUrl   = poster
-                this.plot        = description
-                this.tags        = tags
+            }
+            if (episodes.isEmpty()) {
+                episodes.add(newEpisode(url) { this.name = fullTitle })
+            }
+            newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.distinctBy { it.data }.sortedBy { it.episode }) {
+                this.posterUrl = poster
+                this.plot = description
+                this.tags = tags
             }
         } else {
-            newMovieLoadResponse(fullTitle, url, TvType.AnimeMovie, url) {
-                this.posterUrl   = poster
-                this.plot        = description
-                this.tags        = tags
+            newMovieLoadResponse(fullTitle, url, TvType.Movie, url) {
+                this.posterUrl = poster
+                this.plot = description
+                this.tags = tags
             }
         }
     }
-
-    // ── Load Links ────────────────────────────────────────────────────────────
 
     override suspend fun loadLinks(
         data: String,
@@ -195,43 +166,40 @@ class AnimeZidProvider : MainAPI() {
         var found = false
         val iframeSrcs = mutableListOf<String>()
 
-        // 1. Check for already-rendered iframes
+        playDoc.select("button[data-embed], .play-server").forEach { btn ->
+            val embedUrl = btn.attr("data-embed").ifBlank { btn.attr("data-url") }
+            if (embedUrl.isNotBlank() && embedUrl.startsWith("http")) {
+                iframeSrcs.add(embedUrl)
+            }
+        }
+
         playDoc.select("iframe[src]").forEach { iframe ->
             val src = iframe.attr("src")
-            if (src.isNotBlank() && src.contains("//")) iframeSrcs.add(src)
-        }
-
-        // 2. Server buttons and data-urls
-        playDoc.select("[data-url], [onclick*='//']").forEach { el ->
-            val src = el.attr("data-url").ifBlank {
-                Regex("""https?://[^\s'"]+""").find(el.attr("onclick"))?.value ?: ""
+            if (src.isNotBlank() && src.contains("//") && !src.contains("disqus")) {
+                iframeSrcs.add(src)
             }
-            if (src.isNotBlank()) iframeSrcs.add(src)
         }
 
-        // 3. Download links (Fix requested by user)
         playDoc.select("a.btn.g.dl.show_dl.api").forEach { dl ->
             val link = dl.attr("href")
             val qualityText = dl.select("span").firstOrNull()?.text()?.trim() ?: "Download"
             val hostName = dl.select("span").getOrNull(1)?.text()?.trim() ?: "Link"
-            
             if (link.isNotBlank() && link.startsWith("http")) {
                 callback.invoke(
                     ExtractorLink(
-                        "$name - $hostName",
-                        "$name - $hostName ($qualityText)",
-                        link,
-                        playUrl,
-                        Qualities.P1080.value,
-                        false
+                        source = "$name Download",
+                        name = "$hostName ($qualityText)",
+                        url = link,
+                        referer = playUrl,
+                        quality = Qualities.Unknown.value,
+                        isM3u8 = false
                     )
                 )
                 found = true
             }
         }
 
-        // 4. Regex for more hosts
-        val hostRegex = Regex("""['"]?(https?://(?:zidwish|smoothpre|filemoon|dood|vidmoly|upstrea|streamwish|megamax|listeamed|upns|streamcasthub|koramaup)[^'"<>\s]+)['"]?""")
+        val hostRegex = Regex("""['"]?(https?://(?:zidwish|smoothpre|filemoon|dood|vidmoly|upstrea|streamwish|megamax|listeamed|upns|streamcasthub|koramaup|vidtube)[^'"<>\s]+)['"]?""")
         playDoc.select("script").forEach { script ->
             hostRegex.findAll(script.html()).forEach { iframeSrcs.add(it.groupValues[1]) }
         }
@@ -240,8 +208,7 @@ class AnimeZidProvider : MainAPI() {
             val embedUrl = if (embedUrlRaw.startsWith("//")) "https:$embedUrlRaw" else embedUrlRaw
             try {
                 when {
-                    // Hosts that need WebView interception
-                    listOf("zidwish", "smoothpre", "upns", "streamcasthub", "megamax", "listeamed").any { embedUrl.contains(it) } -> {
+                    listOf("zidwish", "smoothpre", "upns", "streamcasthub", "megamax", "listeamed", "vidtube").any { embedUrl.contains(it) } -> {
                         val m3u8 = WebViewResolver(
                             interceptUrl = Regex(""".*\.m3u8.*""")
                         ).resolveUsingWebView(
@@ -263,7 +230,6 @@ class AnimeZidProvider : MainAPI() {
             } catch (e: Exception) { /* ignore */ }
         }
 
-        // Last resort: WebView on the full play page with generic M3U8 intercept
         if (!found) {
             try {
                 val webView = WebViewResolver(
@@ -271,7 +237,6 @@ class AnimeZidProvider : MainAPI() {
                 ).resolveUsingWebView(
                     requestCreator("GET", playUrl, referer = data)
                 ).first
-
                 val videoUrl = webView?.url?.toString()
                 if (!videoUrl.isNullOrBlank()) {
                     M3u8Helper.generateM3u8(name, videoUrl, referer = playUrl)
