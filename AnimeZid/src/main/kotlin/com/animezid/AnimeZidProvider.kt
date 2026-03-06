@@ -39,6 +39,7 @@ class AnimeZidProvider : MainAPI() {
         val url = if (page == 1) request.data else "${request.data}&page=$page"
         val doc = app.get(url).document
         val items = doc.select("a.movie").mapNotNull { it.toSearchResult() }
+            .distinctBy { it.name } // Deduplicate by sanitized title
         return newHomePageResponse(request.name, items, hasNext = items.isNotEmpty())
     }
 
@@ -49,6 +50,7 @@ class AnimeZidProvider : MainAPI() {
             "$mainUrl/search.php?keywords=${query.encodeUrl()}"
         ).document
         return doc.select("a.movie").mapNotNull { it.toSearchResult() }
+            .distinctBy { it.name } // Deduplicate by sanitized title
     }
 
     // ── Card helper ───────────────────────────────────────────────────────────
@@ -56,13 +58,22 @@ class AnimeZidProvider : MainAPI() {
     private fun Element.toSearchResult(): SearchResponse? {
         val href  = absUrl("href").ifBlank { return null }
 
-        // Title is in span.title (confirmed by HTML probe)
-        val title = select("span.title").text().trim()
+        // Title is in span.title
+        val rawTitle = select("span.title").text().trim()
             .ifBlank { select("span").firstOrNull { it.hasClass("title") }?.text()?.trim().orEmpty() }
             .ifBlank { attr("title").trim() }
             .ifBlank { return null }
 
-        // Images are lazy-loaded: class="lazy" with data-src attribute (NOT src)
+        // Sanitize title for grouping: remove Episode part
+        // Example: "بوليانا الحلقة 49" -> "بوليانا"
+        val title = rawTitle
+            .replace(Regex("""\s*الحلقة\s*\d+.*"""), "")
+            .replace(Regex("""\s*حلقة\s*\d+.*"""), "")
+            .replace(Regex("""\s*الموسم\s*\d+.*"""), "")
+            .replace(Regex("""\s*موسم\s*\d+.*"""), "")
+            .trim()
+
+        // Images are lazy-loaded: data-src confirmed
         val img   = select("img").firstOrNull()
         val poster = (img?.attr("data-src") ?: img?.attr("src") ?: "").let {
             when {
@@ -83,13 +94,15 @@ class AnimeZidProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val doc = app.get(url).document
 
-        // Title: try several selectors
+        // In v3, the "title" from SearchResult might be sanitized, 
+        // but load() should find the REAL title and full episode list.
         val title = doc.select("h1, .movies-title, .entry-title, h2.title, div.title > span")
             .firstOrNull()?.text()?.trim()
+            ?.replace(Regex("""\s*الحلقة\s*\d+.*"""), "")
+            ?.replace(Regex("""\s*حلقة\s*\d+.*"""), "")
             ?: doc.select("meta[property=og:title]").attr("content").trim()
-            .ifBlank { doc.title().substringBefore(" - ") }
+            .substringBefore(" الحلقة")
 
-        // Poster: og:image is most reliable on detail pages
         val poster = doc.select("meta[property=og:image]").attr("content").ifBlank {
             doc.select("img.movie-img, div.movies-img img, img[itemprop=image]")
                 .firstOrNull()?.let {
@@ -112,12 +125,12 @@ class AnimeZidProvider : MainAPI() {
             .map { it.text().trim() }.filter { it.isNotBlank() }
 
         // ── Episode links ────────────────────────────────────────────────────
-        // Episodes link to watch.php?vid=HEX
+        // Every episode page has a list of ALL episodes in that series.
         val episodeElements = doc.select("a[href*='watch.php?vid='], a[href*='?vid=']")
             .filter { el ->
                 val t = el.text()
                 t.contains("حلقة") || t.contains("فيلم") || el.attr("href").contains("vid=")
-            }
+            }.distinctBy { it.attr("href") }
 
         return if (episodeElements.isNotEmpty()) {
             val episodes = episodeElements.mapIndexed { index, el ->
@@ -134,7 +147,7 @@ class AnimeZidProvider : MainAPI() {
                     this.season  = seasonNum
                     this.episode = episodeNum
                 }
-            }
+            }.sortedWith(compareBy({ it.season }, { it.episode }))
 
             newTvSeriesLoadResponse(title, url, TvType.Anime, episodes) {
                 this.posterUrl   = poster
@@ -142,7 +155,6 @@ class AnimeZidProvider : MainAPI() {
                 this.tags        = tags
             }
         } else {
-            // Single movie
             newMovieLoadResponse(title, url, TvType.AnimeMovie, url) {
                 this.posterUrl   = poster
                 this.plot        = description
@@ -168,28 +180,32 @@ class AnimeZidProvider : MainAPI() {
         var found = false
         val iframeSrcs = mutableListOf<String>()
 
-        // Already-rendered iframes
+        // 1. Check for already-rendered iframes
         playDoc.select("iframe[src]").forEach { iframe ->
             val src = iframe.attr("src")
-            if (src.isNotBlank() && src.startsWith("http")) iframeSrcs.add(src)
+            if (src.isNotBlank() && src.contains("//")) iframeSrcs.add(src)
         }
 
-        // Server buttons
-        playDoc.select("[data-url]").forEach { el ->
-            val src = el.attr("data-url")
+        // 2. Server buttons and data-urls
+        playDoc.select("[data-url], [onclick*='//']").forEach { el ->
+            val src = el.attr("data-url").ifBlank {
+                Regex("""https?://[^\s'"]+""").find(el.attr("onclick"))?.value ?: ""
+            }
             if (src.isNotBlank()) iframeSrcs.add(src)
         }
 
-        // JS-embedded URLs in scripts
+        // 3. Regex for more hosts
+        val hostRegex = Regex("""['"]?(https?://(?:zidwish|smoothpre|filemoon|dood|vidmoly|upstrea|streamwish|megamax|listeamed|upns|streamcasthub)[^'"<>\s]+)['"]?""")
         playDoc.select("script").forEach { script ->
-            Regex("""['"]?(https?://(?:zidwish\.site|smoothpre\.com|filemoon\.|dood\.|vidmoly\.to|upstrea\.me|streamwish\.)[^'"<>\s]+)['"]?""")
-                .findAll(script.html()).forEach { iframeSrcs.add(it.groupValues[1]) }
+            hostRegex.findAll(script.html()).forEach { iframeSrcs.add(it.groupValues[1]) }
         }
 
-        for (embedUrl in iframeSrcs.distinct()) {
+        for (embedUrlRaw in iframeSrcs.distinct()) {
+            val embedUrl = if (embedUrlRaw.startsWith("//")) "https:$embedUrlRaw" else embedUrlRaw
             try {
                 when {
-                    embedUrl.contains("zidwish.site") || embedUrl.contains("smoothpre.com") -> {
+                    // Hosts that need WebView interception
+                    listOf("zidwish", "smoothpre", "upns", "streamcasthub", "megamax").any { embedUrl.contains(it) } -> {
                         val m3u8 = WebViewResolver(
                             interceptUrl = Regex(""".*\.m3u8.*""")
                         ).resolveUsingWebView(
@@ -203,14 +219,15 @@ class AnimeZidProvider : MainAPI() {
                         }
                     }
                     else -> {
-                        loadExtractor(embedUrl, referer = playUrl, subtitleCallback, callback)
-                        found = true
+                        if (loadExtractor(embedUrl, referer = playUrl, subtitleCallback, callback)) {
+                            found = true
+                        }
                     }
                 }
-            } catch (e: Exception) { /* ignore per-server errors */ }
+            } catch (e: Exception) { /* ignore */ }
         }
 
-        // Last resort: WebView on the full play page
+        // Last resort: WebView on the full play page with generic M3U8 intercept
         if (!found) {
             try {
                 val webView = WebViewResolver(
@@ -230,8 +247,6 @@ class AnimeZidProvider : MainAPI() {
 
         return found
     }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun String.encodeUrl() = java.net.URLEncoder.encode(this, "UTF-8")
 }
