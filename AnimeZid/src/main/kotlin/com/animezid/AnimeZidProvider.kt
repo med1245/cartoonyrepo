@@ -1,3 +1,4 @@
+@file:Suppress("DEPRECATION", "DEPRECATION_ERROR")
 package com.animezid
 
 import com.lagradost.cloudstream3.*
@@ -50,7 +51,6 @@ class AnimeZidProvider : MainAPI() {
             "$mainUrl/search.php?keywords=${query.encodeUrl()}"
         ).document
         return doc.select("a.movie").mapNotNull { it.toSearchResult() }
-            .distinctBy { it.name } // Deduplicate by sanitized title
     }
 
     // ── Card helper ───────────────────────────────────────────────────────────
@@ -64,14 +64,20 @@ class AnimeZidProvider : MainAPI() {
             .ifBlank { attr("title").trim() }
             .ifBlank { return null }
 
-        // Sanitize title for grouping: remove Episode part
-        // Example: "بوليانا الحلقة 49" -> "بوليانا"
-        val title = rawTitle
-            .replace(Regex("""\s*الحلقة\s*\d+.*"""), "")
-            .replace(Regex("""\s*حلقة\s*\d+.*"""), "")
-            .replace(Regex("""\s*الموسم\s*\d+.*"""), "")
-            .replace(Regex("""\s*موسم\s*\d+.*"""), "")
-            .trim()
+        // Determine if it's a TV series episode or a movie/special
+        val isEpisode = rawTitle.contains("الحلقة") || rawTitle.contains("حلقة") || rawTitle.contains("موسم") || rawTitle.contains("الموسم")
+        
+        // Sanitize title for grouping ONLY if it's clearly an episode
+        val title = if (isEpisode) {
+            rawTitle
+                .replace(Regex("""\s*الحلقة\s*\d+.*"""), "")
+                .replace(Regex("""\s*حلقة\s*\d+.*"""), "")
+                .replace(Regex("""\s*الموسم\s*\d+.*"""), "")
+                .replace(Regex("""\s*موسم\s*\d+.*"""), "")
+                .trim()
+        } else {
+            rawTitle.trim()
+        }
 
         // Images are lazy-loaded: data-src confirmed
         val img   = select("img").firstOrNull()
@@ -84,8 +90,15 @@ class AnimeZidProvider : MainAPI() {
             }
         }
 
-        return newTvSeriesSearchResponse(title, href, TvType.Anime) {
-            this.posterUrl = poster
+        // Use Movie for things not identified as episodes to prevent unwanted grouping
+        return if (isEpisode) {
+            newTvSeriesSearchResponse(title, href, TvType.Anime) {
+                this.posterUrl = poster
+            }
+        } else {
+            newMovieSearchResponse(title, href, TvType.AnimeMovie) {
+                this.posterUrl = poster
+            }
         }
     }
 
@@ -94,14 +107,16 @@ class AnimeZidProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val doc = app.get(url).document
 
-        // In v3, the "title" from SearchResult might be sanitized, 
-        // but load() should find the REAL title and full episode list.
-        val title = doc.select("h1, .movies-title, .entry-title, h2.title, div.title > span")
-            .firstOrNull()?.text()?.trim()
-            ?.replace(Regex("""\s*الحلقة\s*\d+.*"""), "")
-            ?.replace(Regex("""\s*حلقة\s*\d+.*"""), "")
+        // FIXED: Use .movie_title h1 to avoid the "Welcome" generic h1
+        val titleSelector = doc.select(".movie_title h1, .movies-title, .entry-title, h2.title, div.title > span")
+        val fullTitle = titleSelector.firstOrNull()?.text()?.trim()
             ?: doc.select("meta[property=og:title]").attr("content").trim()
-            .substringBefore(" الحلقة")
+
+        // Sanitize title for the series object (if it's a series)
+        val title = fullTitle
+            .replace(Regex("""\s*الحلقة\s*\d+.*"""), "")
+            .replace(Regex("""\s*حلقة\s*\d+.*"""), "")
+            .trim()
 
         val poster = doc.select("meta[property=og:image]").attr("content").ifBlank {
             doc.select("img.movie-img, div.movies-img img, img[itemprop=image]")
@@ -155,7 +170,7 @@ class AnimeZidProvider : MainAPI() {
                 this.tags        = tags
             }
         } else {
-            newMovieLoadResponse(title, url, TvType.AnimeMovie, url) {
+            newMovieLoadResponse(fullTitle, url, TvType.AnimeMovie, url) {
                 this.posterUrl   = poster
                 this.plot        = description
                 this.tags        = tags
@@ -194,8 +209,29 @@ class AnimeZidProvider : MainAPI() {
             if (src.isNotBlank()) iframeSrcs.add(src)
         }
 
-        // 3. Regex for more hosts
-        val hostRegex = Regex("""['"]?(https?://(?:zidwish|smoothpre|filemoon|dood|vidmoly|upstrea|streamwish|megamax|listeamed|upns|streamcasthub)[^'"<>\s]+)['"]?""")
+        // 3. Download links (Fix requested by user)
+        playDoc.select("a.btn.g.dl.show_dl.api").forEach { dl ->
+            val link = dl.attr("href")
+            val qualityText = dl.select("span").firstOrNull()?.text()?.trim() ?: "Download"
+            val hostName = dl.select("span").getOrNull(1)?.text()?.trim() ?: "Link"
+            
+            if (link.isNotBlank() && link.startsWith("http")) {
+                callback.invoke(
+                    ExtractorLink(
+                        "$name - $hostName",
+                        "$name - $hostName ($qualityText)",
+                        link,
+                        playUrl,
+                        Qualities.P1080.value,
+                        false
+                    )
+                )
+                found = true
+            }
+        }
+
+        // 4. Regex for more hosts
+        val hostRegex = Regex("""['"]?(https?://(?:zidwish|smoothpre|filemoon|dood|vidmoly|upstrea|streamwish|megamax|listeamed|upns|streamcasthub|koramaup)[^'"<>\s]+)['"]?""")
         playDoc.select("script").forEach { script ->
             hostRegex.findAll(script.html()).forEach { iframeSrcs.add(it.groupValues[1]) }
         }
@@ -205,7 +241,7 @@ class AnimeZidProvider : MainAPI() {
             try {
                 when {
                     // Hosts that need WebView interception
-                    listOf("zidwish", "smoothpre", "upns", "streamcasthub", "megamax").any { embedUrl.contains(it) } -> {
+                    listOf("zidwish", "smoothpre", "upns", "streamcasthub", "megamax", "listeamed").any { embedUrl.contains(it) } -> {
                         val m3u8 = WebViewResolver(
                             interceptUrl = Regex(""".*\.m3u8.*""")
                         ).resolveUsingWebView(
