@@ -4,7 +4,7 @@ dependencies {
     implementation("org.mozilla:rhino:1.7.13")
 }
 
-version = 4
+version = 5
 
 cloudstream {
     description = "Movies, series and anime from egibest.org"

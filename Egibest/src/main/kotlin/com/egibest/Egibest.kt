@@ -18,66 +18,55 @@ class Egibest : MainAPI() {
     override val hasMainPage = true
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie, TvType.Anime)
 
-    // ── helpers ────────────────────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────────────
 
-    private fun String.toAbsUrl(): String =
+    private fun String.toAbs(): String =
         if (startsWith("http")) this
         else if (startsWith("/")) "$mainUrl$this"
         else "$mainUrl/$this"
 
-    /** Movie if title contains "فيلم" OR slug doesn't look like an episode/season page */
-    private fun isMovieUrl(href: String, title: String): Boolean {
-        val slug = href.lowercase()
-        if (title.contains("فيلم") || title.contains("film", ignoreCase = true)) return true
-        if (slug.contains("/movie/") || slug.contains("مشاهدة-فيلم") || slug.contains("%d9%85%d8%b4%d8%a7%d9%87%d8%af%d8%a9-%d9%81%d9%8a%d9%84%d9%85")) return true
-        return false
+    private fun isMovie(href: String, rawTitle: String): Boolean {
+        val t = rawTitle
+        return t.contains("فيلم") || t.contains("film", ignoreCase = true)
+                || href.contains("مشاهدة-فيلم") || href.contains("%d9%81%d9%8a%d9%84%d9%85")
     }
 
-    // ── Card parsing ───────────────────────────────────────────────────────────────
+    private fun cleanTitle(raw: String): String = raw
+        .replace(Regex("^مشاهدة (فيلم|مسلسل|انمي|أنمي|كرتون|برنامج)\\s+"), "")
+        .replace(Regex("\\s+(مترجم|مدبلج|حصرى|حصريا|اون لاين|اونلاين|كامل|على أكثر من سيرفر|كاملة).*$"), "")
+        .trim()
 
-    private fun Element.toSearchResponse(): SearchResponse? {
-        val href = absUrl("href").ifBlank { attr("href").toAbsUrl() }.ifBlank { return null }
+    // ── Card ───────────────────────────────────────────────────────────────────────
+
+    private fun Element.toCard(): SearchResponse? {
+        val href = absUrl("href").ifBlank { attr("href").toAbs() }.ifBlank { return null }
         val img = selectFirst("img") ?: return null
-        // poster: site uses direct src, not data-src
-        val poster = img.attr("src").trim().ifBlank { null }
-        // title: from h3 inside the card OR alt of img
+        val poster = img.attr("src").trim().let { if (it.startsWith("http")) it else null }
         val rawTitle = (selectFirst("h3.title, h3, span.title")?.text()?.trim()
-            ?: img.attr("alt").trim())
-        val title = rawTitle.ifBlank { attr("title").trim().ifBlank { return null } }
-        // clean title - strip "مشاهدة فيلم/مسلسل ... مترجم ..." prefix if needed
-        val cleanTitle = title
-            .replace(Regex("^مشاهدة (فيلم|مسلسل|انمي|كرتون|برنامج)\\s+"), "")
-            .replace(Regex("\\s+(مترجم|مترجمة|مدبلج|مدبلجة|اون لاين|اونلاين|حصرى|على أكثر من سيرفر).*$"), "")
-            .trim().ifBlank { title }
-        val isMovie = isMovieUrl(href, rawTitle)
-        return if (isMovie) {
-            newMovieSearchResponse(cleanTitle, href, TvType.Movie) { posterUrl = poster }
-        } else {
-            newTvSeriesSearchResponse(cleanTitle, href, TvType.TvSeries) { posterUrl = poster }
-        }
+            ?: img.attr("alt").trim()).ifBlank { return null }
+        val title = cleanTitle(rawTitle).ifBlank { rawTitle }
+        return if (isMovie(href, rawTitle))
+            newMovieSearchResponse(title, href, TvType.Movie) { posterUrl = poster }
+        else
+            newTvSeriesSearchResponse(title, href, TvType.TvSeries) { posterUrl = poster }
     }
 
-    // ── Main page ──────────────────────────────────────────────────────────────────
+    // ── Main page – mirrors site nav ───────────────────────────────────────────────
 
     override val mainPage = mainPageOf(
-        "$mainUrl/trending/?page=" to "الأكثر مشاهدة",
-        "$mainUrl/movies/?page=" to "أفلام جديدة",
-        "$mainUrl/movies/latest?page=" to "أحدث الإضافات",
-        "$mainUrl/tv/?page=" to "مسلسلات جديدة",
-        "$mainUrl/animes/popular?page=" to "الانمي",
-        "$mainUrl/tv/korean?page=" to "الدراما الكورية",
-        "$mainUrl/movies/animation?page=" to "أفلام انمي وكرتون",
-        "$mainUrl/movies/horror?page=" to "أفلام رعب",
-        "$mainUrl/movies/drama?page=" to "أفلام دراما",
-        "$mainUrl/movies/romance?page=" to "رومانسية",
+        "$mainUrl/trends/?page=" to "التريند",
+        "$mainUrl/last/?page=" to "المضاف حديثاً",
+        "$mainUrl/movies/?page=" to "أحدث الأفلام",
+        "$mainUrl/series/?page=" to "أحدث الحلقات",
+        "$mainUrl/category/anime/?page=" to "أحدث الكرتون",
+        "$mainUrl/category/%D9%85%D8%B3%D9%84%D8%B3%D9%84%D8%A7%D8%AA-%D8%B1%D9%85%D8%B6%D8%A7%D9%86-2026/?page=" to "مسلسلات رمضان",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = request.data + page
         val doc = app.get(url).document
         val items = doc.select("a.postBlockCol, a.postBlock")
-            .mapNotNull { it.toSearchResponse() }
-            .distinctBy { it.url }
+            .mapNotNull { it.toCard() }.distinctBy { it.url }
         return newHomePageResponse(request.name, items)
     }
 
@@ -86,91 +75,52 @@ class Egibest : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val doc = app.get("$mainUrl/?s=${query.trim().replace(" ", "+")}").document
         return doc.select("a.postBlockCol, a.postBlock")
-            .mapNotNull { it.toSearchResponse() }
-            .distinctBy { it.url }
+            .mapNotNull { it.toCard() }.distinctBy { it.url }
     }
 
     // ── Load ───────────────────────────────────────────────────────────────────────
 
     override suspend fun load(url: String): LoadResponse? {
         val doc = app.get(url).document
-
         val rawTitle = doc.selectFirst("h1, .postTitle, .entry-title")?.text()?.trim()
-            ?: doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
-            ?: ""
+            ?: doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim() ?: ""
+        val title = cleanTitle(rawTitle).ifBlank { rawTitle }
 
-        val isMovie = isMovieUrl(url, rawTitle)
-
-        val cleanTitle = rawTitle
-            .replace(Regex("^مشاهدة (فيلم|مسلسل|انمي|كرتون)\\s+"), "")
-            .replace(Regex("\\s+(مترجم|مدبلج|اون لاين|اونلاين|حصرى|كامل|على أكثر من سيرفر).*$"), "")
-            .trim().ifBlank { rawTitle }
-
+        // Poster from og:image (most stable)
         val poster = doc.selectFirst("meta[property=og:image]")?.attr("content")
-            ?: doc.selectFirst(".postCover img, .post-thumbnail img, article .aligncenter img")?.attr("src")
+            ?: doc.selectFirst("img.postCoverImg, .postCover img, article img")?.attr("src")
 
-        val plot = doc.selectFirst(".postDesc, .story, .entry-summary, .storyLine")?.text()?.trim()
-
+        val plot = doc.selectFirst(".postDesc, .entry-content p, .storyLine")?.text()?.trim()
         val year = Regex("(19|20)\\d{2}").find(rawTitle)?.value?.toIntOrNull()
-
-        val tags = doc.select(".postGenres a, .genres a, a[href*=/genre/], a[href*=/category/]")
-            .map { it.text().trim() }.filter { it.isNotBlank() }
-
+        val tags = doc.select("a[href*=/category/], a[href*=/genre/]").map { it.text().trim() }.filter { it.isNotBlank() }
         val trailer = doc.selectFirst("a[href*=youtube.com/watch]")?.attr("href")
 
-        if (isMovie) {
-            return newMovieLoadResponse(cleanTitle, url, TvType.Movie, url) {
-                posterUrl = poster
-                this.year = year
-                this.plot = plot
-                this.tags = tags
+        if (isMovie(url, rawTitle)) {
+            return newMovieLoadResponse(title, url, TvType.Movie, url) {
+                posterUrl = poster; this.year = year; this.plot = plot; this.tags = tags
                 addTrailer(trailer)
             }
         }
 
-        // ── Series: collect all episode links ─────────────────────────────────────
+        // Series – collect episode cards
         val episodes = mutableListOf<Episode>()
-
-        // Try season tabs (li with data-season or similar)
-        val seasonDivs = doc.select("ul.seasonList li a, .seasons-tabs a, #seasons-list a")
-        val pagesWithSeason = if (seasonDivs.isNotEmpty()) {
-            seasonDivs.mapNotNull { a ->
-                val href = a.absUrl("href").ifBlank { null } ?: return@mapNotNull null
-                val sNum = Regex("\\d+").find(a.text())?.value?.toIntOrNull()
-                href to sNum
-            }
-        } else {
-            listOf(url to null)
+        doc.select("a.postBlock, div.postBlock a").forEach { ep ->
+            val epHref = ep.absUrl("href").ifBlank { return@forEach }
+            if (epHref == url) return@forEach
+            val epText = ep.text().trim()
+            val epNum = Regex("(\\d+)").find(epText)?.value?.toIntOrNull()
+            val epPoster = ep.selectFirst("img")?.attr("src")?.let { if (it.startsWith("http")) it else null }
+            episodes.add(newEpisode(epHref) {
+                name = epText.ifBlank { "الحلقة $epNum" }
+                episode = epNum
+                posterUrl = epPoster
+            })
         }
+        if (episodes.isEmpty()) episodes.add(newEpisode(url) { name = title })
 
-        for ((pageUrl, seasonNum) in pagesWithSeason) {
-            val d = if (pageUrl == url) doc else app.get(pageUrl).document
-            // find episode links
-            d.select("a.postBlock, a[href*=الحلقة], a[href*=ep-], a[href*=episode]").forEach { ep ->
-                val epHref = ep.absUrl("href").ifBlank { return@forEach }
-                val epText = ep.text().trim()
-                // Skip if it's a poster for another series (non-episode link)
-                if (epHref == pageUrl) return@forEach
-                val epNum = Regex("(\\d+)").find(epText)?.value?.toIntOrNull()
-                episodes.add(newEpisode(epHref) {
-                    name = epText.ifBlank { "الحلقة $epNum" }
-                    episode = epNum
-                    season = seasonNum
-                    this.posterUrl = ep.selectFirst("img")?.attr("src")?.ifBlank { null }
-                })
-            }
-        }
-
-        if (episodes.isEmpty()) {
-            episodes.add(newEpisode(url) { name = cleanTitle })
-        }
-
-        return newTvSeriesLoadResponse(cleanTitle, url, TvType.TvSeries,
+        return newTvSeriesLoadResponse(title, url, TvType.TvSeries,
             episodes.distinctBy { it.data }.sortedBy { it.episode }) {
-            posterUrl = poster
-            this.year = year
-            this.plot = plot
-            this.tags = tags
+            posterUrl = poster; this.year = year; this.plot = plot; this.tags = tags
             addTrailer(trailer)
         }
     }
@@ -187,67 +137,62 @@ class Egibest : MainAPI() {
         var found = false
         val embedUrls = mutableSetOf<String>()
 
-        // 1. Server buttons using onclick="loadIframe(this, 'URL')"
-        val onclickRegex = Regex("""loadIframe\s*\(\s*this\s*,\s*['"]([^'"]+)['"]""")
-        doc.select("ul#watch-servers-list li, .servers-list li, li[onclick]").forEach { li ->
-            val onclick = li.attr("onclick")
-            onclickRegex.find(onclick)?.groupValues?.get(1)?.let { embedUrls.add(it.toAbsUrl()) }
+        // Primary: onclick="loadIframe(this, 'URL')" on <li> server buttons
+        val loadIframeRegex = Regex("""loadIframe\s*\(\s*this\s*,\s*['"]([^'"]+)['"]""")
+        doc.select("[onclick]").forEach { el ->
+            loadIframeRegex.find(el.attr("onclick"))
+                ?.groupValues?.get(1)?.let { embedUrls.add(it.toAbs()) }
         }
 
-        // 2. Anchor tags with onclick
-        doc.select("a[onclick]").forEach { a ->
-            onclickRegex.find(a.attr("onclick"))?.groupValues?.get(1)?.let { embedUrls.add(it.toAbsUrl()) }
+        // Secondary: onclick="window.open('URL',...)" for download/direct links
+        val windowOpenRegex = Regex("""window\.open\s*\(\s*['"]([^'"]+)['"]""")
+        doc.select("[onclick]").forEach { el ->
+            windowOpenRegex.find(el.attr("onclick"))
+                ?.groupValues?.get(1)?.let { url ->
+                    if (url.startsWith("http")) embedUrls.add(url)
+                }
         }
 
-        // 3. Iframes with src
+        // Fallback: iframes already rendered
         doc.select("iframe[src]").forEach { iframe ->
-            val src = iframe.absUrl("src").ifBlank { iframe.attr("src").toAbsUrl() }
-            if (!src.contains("disqus") && !src.contains("facebook") && src.startsWith("http")) {
-                embedUrls.add(src)
-            }
+            val src = iframe.absUrl("src")
+            if (src.isNotBlank() && !src.contains("disqus") && !src.contains("facebook")) embedUrls.add(src)
         }
 
-        // 4. data-* attributes on any element
-        doc.select("[data-src],[data-embed],[data-url],[data-link]").forEach { el ->
-            for (attr in listOf("data-src", "data-embed", "data-url", "data-link")) {
-                val v = el.attr(attr).trim()
-                if (v.startsWith("http")) embedUrls.add(v)
-                else if (v.startsWith("/")) embedUrls.add("$mainUrl$v")
-            }
-        }
-
-        // 5. Scan scripts for embed/stream/m3u8 URLs
+        // Scan scripts for loadIframe calls and raw embed URLs
         doc.select("script").forEach { script ->
             val html = script.html()
-            onclickRegex.findAll(html).forEach { embedUrls.add(it.groupValues[1].toAbsUrl()) }
-            Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").findAll(html).forEach { embedUrls.add(it.value) }
-            Regex("""["'](https?://(?:vidtube|doodstream|updown|lulustream|streamwish|cybervynx|vidsrc|streameast|filemoon|mixdrop)[^"']+)["']""")
-                .findAll(html).forEach { embedUrls.add(it.groupValues[1]) }
+            loadIframeRegex.findAll(html).forEach { embedUrls.add(it.groupValues[1].toAbs()) }
+            Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""").findAll(html)
+                .forEach { embedUrls.add(it.groupValues[1]) }
         }
 
-        // 6. Try to resolve each candidate embed
         for (embedUrl in embedUrls.distinct()) {
+            if (embedUrl.isBlank()) continue
             try {
-                if (embedUrl.contains(".m3u8")) {
-                    M3u8Helper.generateM3u8(name, embedUrl, referer = data).forEach { callback(it); found = true }
-                } else {
-                    val result = loadExtractor(embedUrl, referer = data, subtitleCallback, callback)
-                    if (result) found = true
+                when {
+                    embedUrl.contains(".m3u8") -> {
+                        M3u8Helper.generateM3u8(name, embedUrl, referer = data).forEach { callback(it); found = true }
+                    }
+                    else -> {
+                        if (loadExtractor(embedUrl, referer = data, subtitleCallback, callback)) found = true
+                    }
                 }
-            } catch (e: Exception) { /* ignore */ }
+            } catch (e: Exception) { /* skip failed extractors */ }
         }
 
-        // 7. Last resort WebView for anything that loads dynamically
+        // Last resort: WebView intercept on the page itself
         if (!found) {
             try {
                 val resolved = WebViewResolver(
                     interceptUrl = Regex(""".*\.(m3u8|mp4).*""")
-                ).resolveUsingWebView(requestCreator("GET", data, referer = mainUrl)).first
+                ).resolveUsingWebView(
+                    requestCreator("GET", data, referer = mainUrl)
+                ).first
                 val videoUrl = resolved?.url?.toString()
                 if (!videoUrl.isNullOrBlank()) {
-                    if (videoUrl.contains(".m3u8")) {
-                        M3u8Helper.generateM3u8(name, videoUrl, referer = data).forEach { callback(it); found = true }
-                    }
+                    M3u8Helper.generateM3u8(name, videoUrl, referer = data)
+                        .toList().forEach { callback(it); found = true }
                 }
             } catch (e: Exception) { /* ignore */ }
         }
