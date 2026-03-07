@@ -1,3 +1,4 @@
+@file:Suppress("DEPRECATION", "DEPRECATION_ERROR")
 package com.egibest
 
 import android.annotation.TargetApi
@@ -6,66 +7,55 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
-import com.lagradost.nicehttp.Requests
-import com.lagradost.nicehttp.Session
-import okhttp3.HttpUrl.Companion.toHttpUrl
+import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.Qualities
 import org.jsoup.nodes.Element
-import java.util.Base64
-import org.mozilla.javascript.Context
-import org.mozilla.javascript.Scriptable
-
-fun String.runJS(variableName: String): String {
-    val rhino = Context.enter()
-    rhino.initSafeStandardObjects()
-    rhino.optimizationLevel = -1
-    val scope: Scriptable = rhino.initSafeStandardObjects()
-    val script = this
-    val result: String
-    try {
-        var js = ""
-        for (i in script.indices) {
-            js += script[i]
-        }
-        rhino.evaluateString(scope, js, "JavaScript", 1, null)
-        result = Context.toString(scope.get(variableName, scope))
-    } finally {
-        Context.exit()
-    }
-    return result
-}
 
 class Egibest : MainAPI() {
     override var lang = "ar"
-    override var mainUrl = "https://egybest.media"
+    override var mainUrl = "https://egibest.org"
     override var name = "EgyBest"
-	var pssid = ""
     override val usesWebView = false
     override val hasMainPage = true
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie, TvType.Anime)
+
+    private fun String.absUrlOrJoin(base: String): String {
+        return if (this.startsWith("http")) this
+        else if (this.startsWith("/")) "$base$this"
+        else "$base/$this"
+    }
 
     private fun String.getIntFromText(): Int? {
         return Regex("""\d+""").find(this)?.groupValues?.firstOrNull()?.toIntOrNull()
     }
 
+    private fun String.getYearFromTitle(): Int? {
+        return Regex("""\(\d{4}\)""").find(this)?.groupValues?.firstOrNull()?.replace("(", "")?.replace(")", "")?.toIntOrNull()
+    }
+
+    // Card anchor = a.postBlockCol (trending/category) or a.postBlock (home)
     private fun Element.toSearchResponse(): SearchResponse? {
-        val url = this.attr("href") ?: return null
-        val posterUrl = select("img")?.attr("src")
-        var title = select("span.title").text()
+        val href = absUrl("href").ifBlank { attr("href") }.ifBlank { return null }
+        if (href.contains("/category/") || href.contains("/genre/") || href.contains("/tag/")) return null
+        val img = selectFirst("img")
+        val poster = img?.attr("src")?.trim()?.ifBlank { null }
+        var title = selectFirst("h3.title, span.title, .title")?.text()?.trim()
+            ?: img?.attr("alt")?.trim()
+            ?: attr("title").trim().ifBlank { return null }
+        if (title.isBlank()) return null
         val year = title.getYearFromTitle()
-        val isMovie = Regex(".*/movie/.*|.*/masrahiya/.*").matches(url)
-        val tvType = if (isMovie) TvType.Movie else TvType.TvSeries
-        title = if (year !== null) title else title.split(" (")[0].trim()
-        val quality = select("span.ribbon span").text().replace("-", "")
-        // If you need to differentiate use the url.
-        return if (tvType == TvType.TvSeries) {
-            newTvSeriesSearchResponse(title, mainUrl + url, TvType.TvSeries) {
-                this.posterUrl = posterUrl
+        title = title.split(" (")[0].trim()
+        val quality = selectFirst("span.ribbon span, .quality")?.text()?.replace("-", "")
+        val isMovie = Regex(".*/movie/.*|.*/film/.*|.*/masrahiya/.*").containsMatchIn(href)
+        return if (isMovie) {
+            newMovieSearchResponse(title, href, TvType.Movie) {
+                posterUrl = poster
                 this.year = year
                 this.quality = getQualityFromString(quality)
             }
         } else {
-            newMovieSearchResponse(title, mainUrl + url, TvType.Movie) {
-                this.posterUrl = posterUrl
+            newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+                posterUrl = poster
                 this.year = year
                 this.quality = getQualityFromString(quality)
             }
@@ -73,202 +63,161 @@ class Egibest : MainAPI() {
     }
 
     override val mainPage = mainPageOf(
-        "$mainUrl/trending/?page=" to "الأفلام الأكثر مشاهدة",
+        "$mainUrl/trending/?page=" to "الأكثر مشاهدة",
         "$mainUrl/movies/?page=" to "أفلام جديدة",
-        "$mainUrl/tv/?page=" to "مسلسلات جديدة ",
-        "$mainUrl/tv/korean?page=" to "الدراما الكورية ",
+        "$mainUrl/tv/?page=" to "مسلسلات جديدة",
+        "$mainUrl/tv/korean?page=" to "الدراما الكورية",
         "$mainUrl/animes/popular?page=" to "مسلسلات الانمي",
-        "$mainUrl/wwe/?page=" to "عروض المصارعة ",
-        "$mainUrl/movies/latest-bluray-2020-2019?page=" to "أفلام جديدة BluRay",
-        "$mainUrl/masrahiyat/?page=" to "مسرحيات ",
-        "$mainUrl/movies/latest?page=" to "أحدث الاضافات",
-        "$mainUrl/movies/comedy?page=" to "أفلام كوميدية",
-        "$mainUrl/explore/?q=superhero/" to "أفلام سوبر هيرو",
-        "$mainUrl/movies/animation?page=" to "أفلام انمي و كرتون",
+        "$mainUrl/movies/latest?page=" to "أحدث الإضافات",
+        "$mainUrl/movies/animation?page=" to "أفلام انمي وكرتون",
         "$mainUrl/movies/romance?page=" to "أفلام رومانسية",
         "$mainUrl/movies/drama?page=" to "أفلام دراما",
         "$mainUrl/movies/horror?page=" to "أفلام رعب",
-        "$mainUrl/movies/documentary?page=" to "أفلام وثائقية",
-        "$mainUrl/World-War-Movies/?page=" to "أفلام عن الحرب العالمية ☢",
-        "$mainUrl/End-Of-The-World-Movies/?page=" to "أفلام عن نهاية العالم",
-        "$mainUrl/movies/arab?page=" to "أفلام عربية ",
     )
 
-    override suspend fun getMainPage(page: Int, request : MainPageRequest): HomePageResponse {
-        val doc = app.get(request.data + page).document
-        val list = doc.select(".movie")
-            .mapNotNull { element ->
-                element.toSearchResponse()
-            }
-        return newHomePageResponse(request.name, list)
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val url = request.data + page
+        val doc = app.get(url).document
+        val items = doc.select("a.postBlockCol, a.postBlock")
+            .mapNotNull { it.toSearchResponse() }
+            .distinctBy { it.url }
+        return newHomePageResponse(request.name, items)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val result = arrayListOf<SearchResponse>()
-        listOf("$mainUrl/explore/?q=$query").mapNotNull { url ->
-            val d = app.get(url).document
-            d.select("div.movies a").not("a.auto.load.btn.b").mapNotNull {
-                it.toSearchResponse()?.let { it1 -> result.add(it1) }
-            }
-        }
-        return result.distinct().sortedBy { it.name }
+        val doc = app.get("$mainUrl/?s=${query.trim().replace(" ", "+")}").document
+        return doc.select("a.postBlockCol, a.postBlock")
+            .mapNotNull { it.toSearchResponse() }
+            .distinctBy { it.url }
     }
 
-    private fun String.getYearFromTitle(): Int? {
-        return Regex("""\(\d{4}\)""").find(this)?.groupValues?.firstOrNull()?.toIntOrNull()
-    }
-
-    override suspend fun load(url: String): LoadResponse {
+    override suspend fun load(url: String): LoadResponse? {
         val doc = app.get(url).document
-        val isMovie = Regex(".*/movie/.*|.*/masrahiya/.*").matches(url)
-        val posterUrl = doc.select("div.movie_img a img")?.attr("src")
-        val year = doc.select("div.movie_title h1 a")?.text()?.toIntOrNull()
-        val title = doc.select("div.movie_title h1 span").text()
-        val youtubeTrailer = doc.select("div.play")?.attr("url")
+        val isMovie = Regex(".*/movie/.*|.*/film/.*|.*/masrahiya/.*").containsMatchIn(url)
 
-        val synopsis = doc.select("div.mbox").firstOrNull {
-            it.text().contains("القصة")
-        }?.text()?.replace("القصة ", "")
+        val title = doc.selectFirst("h1.postTitle, h1.title, .movie_title h1 span, .postTitle")
+            ?.text()?.trim()
+            ?: doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
+            ?: ""
 
-        val tags = doc.select("table.movieTable tbody tr").firstOrNull {
-            it.text().contains("النوع")
-        }?.select("a")?.map { it.text() }
+        val poster = doc.selectFirst("div.postCover img, .movie_img img, meta[property=og:image]")
+            ?.let { el ->
+                if (el.hasAttr("content")) el.attr("content")
+                else el.attr("src").ifBlank { el.attr("data-src") }
+            }
 
-        val actors = doc.select("div.cast_list .cast_item").mapNotNull {
-            val name = it.selectFirst("div > a > img")?.attr("alt") ?: return@mapNotNull null
-            val image = it.selectFirst("div > a > img")?.attr("src") ?: return@mapNotNull null
-            val roleString = it.selectFirst("div > span")!!.text()
-            val mainActor = Actor(name, image)
-            ActorData(actor = mainActor, roleString = roleString)
+        val plot = doc.selectFirst(".postDesc, .storyLine, .entry-content p, .postContent p")
+            ?.text()?.trim()
+
+        val year = doc.selectFirst(".postYear, .year")
+            ?.text()?.trim()?.toIntOrNull()
+            ?: Regex("(19|20)\\d{2}").find(doc.selectFirst(".postInfo, .postMeta")?.text() ?: "")?.value?.toIntOrNull()
+
+        val tags = doc.select(".postGenres a, .genres a, a[href*=/genre/]").map { it.text().trim() }.filter { it.isNotBlank() }
+
+        val trailer = doc.selectFirst("a.trailer, a[href*=youtube.com/watch]")?.attr("href")
+
+        if (isMovie) {
+            return newMovieLoadResponse(title, url, TvType.Movie, url) {
+                posterUrl = poster
+                this.year = year
+                this.plot = plot
+                this.tags = tags
+                addTrailer(trailer)
+            }
         }
 
-        return if (isMovie) {
-            val recommendations = doc.select(".movies_small .movie").mapNotNull { element ->
-                element.toSearchResponse()
-            }
+        // Series - collect episodes
+        val episodes = mutableListOf<Episode>()
 
-            newMovieLoadResponse(
-                title,
-                url,
-                TvType.Movie,
-                url
-            ) {
-                this.posterUrl = posterUrl
-                this.year = year
-                this.recommendations = recommendations
-                this.plot = synopsis
-                this.tags = tags
-                this.actors = actors
-                addTrailer(youtubeTrailer)
-            }
+        // Season tabs like: div.seasonEpisodes or li.seasonTab
+        val seasonLinks = doc.select("ul.seasonList a, .seasons-list a, #seasons .tab-pane a[href]")
+        val targetPages = mutableListOf<Pair<String, Int?>>()
+
+        if (seasonLinks.isEmpty()) {
+            // Single season page, collect episodes directly
+            targetPages.add(url to null)
         } else {
-            val episodes = ArrayList<Episode>()
-            doc.select("#mainLoad > div:nth-child(2) > div.h_scroll > div a").map {
-                it.attr("href")
-            }.mapNotNull {
-                val d = app.get(it).document
-                val season = Regex("season-(.....)").find(it)?.groupValues?.getOrNull(1)?.getIntFromText()
-                if(d.select("tr.published").isNotEmpty()) {
-                    d.select("tr.published").map { element ->
-                        val ep = Regex("ep-(.....)").find(element.select(".ep_title a").attr("href"))?.groupValues?.getOrNull(1)?.getIntFromText()
-                        episodes.add(
-                            newEpisode(mainUrl + element.select(".ep_title a").attr("href")) {
-                                this.name = element.select("td.ep_title").html().replace(".*</span>|</a>".toRegex(), "")
-                                this.season = season
-                                this.episode = ep
-                            }
-                        )
-                    }
-                } else {
-                    d.select("#mainLoad > div:nth-child(3) > div.movies_small a").map { eit ->
-                        val ep = Regex("ep-(.....)").find(eit.attr("href"))?.groupValues?.getOrNull(1)?.getIntFromText()
-                        episodes.add(
-                            newEpisode(mainUrl + eit.attr("href")) {
-                                this.name = eit.select("span.title").text()
-                                this.season = season
-                                this.episode = ep
-                            }
-                        )
-                    }
-                }
+            seasonLinks.forEach { a ->
+                val seasonHref = a.absUrl("href").ifBlank { a.attr("href").absUrlOrJoin(mainUrl) }
+                val seasonNum = Regex("\\d+").find(a.text())?.value?.toIntOrNull()
+                targetPages.add(seasonHref to seasonNum)
             }
-            newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.distinct().sortedBy { it.episode }) {
-                this.posterUrl = posterUrl
-                this.tags = tags
-                this.year = year
-                this.plot = synopsis
-                this.actors = actors
-                addTrailer(youtubeTrailer)
+        }
+
+        for ((pageUrl, seasonNum) in targetPages) {
+            val d = if (pageUrl == url) doc else app.get(pageUrl).document
+            d.select("a.episodeBlock, tr.published .ep_title a, .eps a, .all-episodes a[href]").forEach { ep ->
+                val epHref = ep.absUrl("href").ifBlank { ep.attr("href").absUrlOrJoin(mainUrl) }
+                if (epHref.isBlank()) return@forEach
+                val epName = ep.text().trim().ifBlank { ep.attr("title").trim() }
+                val epNum = Regex("\\d+").find(epName)?.value?.toIntOrNull()
+                episodes.add(newEpisode(epHref) {
+                    name = epName
+                    episode = epNum
+                    season = seasonNum
+                })
             }
+        }
+
+        // Fallback - single episode just load the page as episode
+        if (episodes.isEmpty()) {
+            episodes.add(newEpisode(url) { name = title })
+        }
+
+        return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.distinctBy { it.data }.sortedBy { it.episode }) {
+            posterUrl = poster
+            this.year = year
+            this.plot = plot
+            this.tags = tags
+            addTrailer(trailer)
         }
     }
-	
-    @TargetApi(Build.VERSION_CODES.O)
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val baseURL = data.split("/")[0] + "//" + data.split("/")[2]
-        val client = Requests().baseClient
-        val session = Session(client)
-        println(baseURL)
-        println(data)
-        val doc = session.get(data).document
+        val doc = app.get(data).document
+        var found = false
 
-        val vidstreamURL = baseURL + doc.select("iframe.auto-size").attr("src")
+        // Collect all server buttons / iframes / data-embed attributes
+        val candidates = mutableSetOf<String>()
 
-        val videoSoup = session.get(vidstreamURL, cookies = mapOf(
-            "PSSID" to this@Egibest.pssid,
-        )).document
-        videoSoup.select("source").firstOrNull { it.hasAttr("src") }?.attr("src")?.let {
-            M3u8Helper.generateM3u8(
-                this.name,
-                it,
-                referer = mainUrl,
-                headers = mapOf("range" to "bytes=0-")
-            ).forEach(callback)
-        } ?: run {
-            var jsCode = videoSoup.select("script")[1].html()
-            val function = videoSoup.select("script")[2].attr("onload")
-            val verificationToken = Regex("\\{'[0-9a-zA-Z_]*':'ok'\\}").findAll(jsCode).first().value.replace("\\{'|':.*".toRegex(), "")
-            val encodedAdLinkVar = Regex("\\([0-9a-zA-Z_]{2,12}\\[Math").findAll(jsCode).first().value.replace("\\(|\\[M.*".toRegex(),"")
-            val encodingArraysRegEx = Regex(",[0-9a-zA-Z_]{2,12}=\\[]").findAll(jsCode).toList()
-            val firstEncodingArray = encodingArraysRegEx[1].value.replace(",|=.*".toRegex(),"")
-            val secondEncodingArray = encodingArraysRegEx[2].value.replace(",|=.*".toRegex(),"")
-            
-            jsCode = jsCode.replace("^<script type=\"text/javascript\">".toRegex(),"")
-            jsCode = jsCode.replace(",\\\$\\('\\*'\\).*".toRegex(),";")
-            jsCode = jsCode.replace(",ismob=(.*)\\(navigator\\[(.*)\\]\\)[,;]".toRegex(),";")
-            jsCode = jsCode.replace("var a0b=\\(function\\(\\)(.*)a0a\\(\\);".toRegex(),"")
-            jsCode = "$jsCode var link = ''; for (var i = 0; i <= $secondEncodingArray['length']; i++) { link += $firstEncodingArray[$secondEncodingArray[i]] || ''; } return [link, $encodedAdLinkVar[0]] };var result = $function"
-
-            val javascriptResult = jsCode.runJS("result").split(",")
-            val verificationPath = javascriptResult[0]
-            val encodedAdPath = javascriptResult[1]
-            println(javascriptResult)
-
-            val encodedString = encodedAdPath + "=".repeat(encodedAdPath.length % 4)
-            val decodedPath = String(Base64.getDecoder().decode(encodedString))
-            println("String( $encodedString ) -> Decoded( $decodedPath )")
-            val adLink = "$baseURL/$decodedPath"
-            println(adLink)
-            val verificationLink = "$baseURL/tvc.php?verify=$verificationPath"
-            session.get(adLink)
-            session.post(verificationLink, data=mapOf(verificationToken to "ok"))
-
-            val vidstreamResponse = session.get(vidstreamURL).document
-            val mediaLink = baseURL + vidstreamResponse.select("source").attr("src")
-            println("mediaLink: $mediaLink")
-            println("Cookies: ${session.baseClient.cookieJar.loadForRequest(data.toHttpUrl())}")
-            M3u8Helper.generateM3u8(
-                this.name,
-                mediaLink,
-                referer = mainUrl,
-                headers = mapOf("range" to "bytes=0-")
-            ).forEach(callback)
+        doc.select("iframe[src]").forEach { iframe ->
+            val src = iframe.absUrl("src").ifBlank { iframe.attr("src") }
+            if (src.isNotBlank() && !src.contains("disqus")) candidates.add(src)
         }
-        return true
+
+        doc.select("[data-src], [data-embed], [data-url]").forEach { el ->
+            listOf("data-src", "data-embed", "data-url").forEach { attr ->
+                val v = el.attr(attr).trim()
+                if (v.isNotBlank()) candidates.add(v.absUrlOrJoin(mainUrl))
+            }
+        }
+
+        // Scan scripts for embedded URLs
+        val scriptContent = doc.select("script").joinToString("\n") { it.data() }
+        Regex("""https?://[^\s"'<>]+\.(m3u8|mp4)[^\s"'<>]*""").findAll(scriptContent).forEach {
+            candidates.add(it.value)
+        }
+        Regex("""https?://[^\s"'<>]*(embed|player|stream|watch)[^\s"'<>]*""").findAll(scriptContent).forEach {
+            candidates.add(it.value)
+        }
+
+        for (candidate in candidates.distinct()) {
+            val embedUrl = if (candidate.startsWith("//")) "https:$candidate" else candidate
+            try {
+                if (embedUrl.contains(".m3u8")) {
+                    M3u8Helper.generateM3u8(name, embedUrl, referer = data).forEach { callback(it); found = true }
+                } else {
+                    if (loadExtractor(embedUrl, referer = data, subtitleCallback, callback)) found = true
+                }
+            } catch (e: Exception) { /* ignore */ }
+        }
+
+        return found
     }
 }
