@@ -23,11 +23,18 @@ class Shahid4uProvider : MainAPI() {
 
     companion object {
         private const val TMDB_API = "https://api.themoviedb.org/3"
-        private const val TMDB_KEY = "8d6d91c2856440b9907db47ee286e7d2" // Free community key
+        private const val TMDB_KEY = "8d6d91c2856440b9907db47ee286e7d2"
         private const val TMDB_IMG = "https://image.tmdb.org/t/p/w500"
+        private const val TMDB_IMG_ORIG = "https://image.tmdb.org/t/p/original"
     }
 
-    // ── helpers ────────────────────────────────────────────────────────────────────
+    // ── TMDB data classes ─────────────────────────────────────────────────────────
+    data class TmdbSearchResult(val results: List<TmdbItem>?)
+    data class TmdbItem(val id: Int?, val poster_path: String?, val backdrop_path: String?, val overview: String?, val title: String?, val name: String?)
+    data class TmdbVideosResult(val results: List<TmdbVideo>?)
+    data class TmdbVideo(val key: String?, val site: String?, val type: String?)
+
+    // ── Helpers ───────────────────────────────────────────────────────────────────
 
     private fun String.toAbs(): String =
         if (startsWith("http")) this
@@ -35,8 +42,8 @@ class Shahid4uProvider : MainAPI() {
         else "$mainUrl/$this"
 
     private fun isMovieUrl(href: String): Boolean {
-        val slug = href.lowercase()
-        return slug.contains("%d9%81%d9%8a%d9%84%d9%85") || slug.contains("فيلم")
+        val s = href.lowercase()
+        return s.contains("%d9%81%d9%8a%d9%84%d9%85") || s.contains("فيلم")
     }
 
     private fun tryDecodeBase64(input: String): String? = runCatching {
@@ -56,85 +63,87 @@ class Shahid4uProvider : MainAPI() {
         return results
     }
 
-    /** Extract English title from mixed Arabic/English title for TMDB lookup */
-    private fun extractEnglishTitle(raw: String): String? {
-        // Remove Arabic prefixes like "فيلم", "مسلسل", etc.
+    /** Extract English part of a mixed Arabic/English title */
+    private fun extractEnglish(raw: String): String? {
         val cleaned = raw
-            .replace(Regex("^(فيلم|مسلسل|مشاهدة|برنامج|انمي|أنمي|كرتون)\\s+"), "")
-            .replace(Regex("\\s+(مترجم|مدبلج|اون لاين|اونلاين|حصرى|كامل|مترجمة|مدبلجة).*$"), "")
+            .replace(Regex("^(مشاهدة|فيلم|مسلسل|برنامج|انمي|أنمي|كرتون)\\s+", RegexOption.MULTILINE), "")
+            .replace(Regex("\\s+(مترجم|مدبلج|اون لاين|اونلاين|حصرى|كامل|مترجمة|مدبلجة|صدر عام).*$"), "")
             .trim()
-        // Try to extract just English words
-        val english = Regex("[A-Za-z][A-Za-z0-9':& .-]+").findAll(cleaned)
+        val eng = Regex("[A-Za-z][A-Za-z0-9':&.,! -]+").findAll(cleaned)
             .joinToString(" ") { it.value.trim() }.trim()
-        return english.ifBlank { null }
+        return eng.ifBlank { null }
     }
 
-    /** Extract year from title */
-    private fun extractYear(title: String): Int? =
-        Regex("(19|20)\\d{2}").find(title)?.value?.toIntOrNull()
+    private fun extractYear(s: String): Int? = Regex("(19|20)\\d{2}").find(s)?.value?.toIntOrNull()
 
-    /** Fetch TMDB poster and trailer for a title */
-    private suspend fun fetchTmdbData(title: String, year: Int?, isMovie: Boolean): TmdbData? {
-        val type = if (isMovie) "movie" else "tv"
-        val yearParam = if (year != null) "&year=$year" else ""
-        val query = java.net.URLEncoder.encode(title, "UTF-8")
+    /** Quick TMDB poster lookup — just gets poster URL, nothing else */
+    private suspend fun tmdbPoster(title: String, year: Int?, isMovie: Boolean): String? {
         return runCatching {
-            val searchUrl = "$TMDB_API/search/$type?api_key=$TMDB_KEY&query=$query$yearParam&language=ar"
-            val response = app.get(searchUrl).text
-            val json = parseJson<TmdbSearchResult>(response)
+            val type = if (isMovie) "movie" else "tv"
+            val q = java.net.URLEncoder.encode(title, "UTF-8")
+            val yp = if (year != null) "&year=$year" else ""
+            val url = "$TMDB_API/search/$type?api_key=$TMDB_KEY&query=$q$yp"
+            val resp = app.get(url).text
+            val json = parseJson<TmdbSearchResult>(resp)
+            json.results?.firstOrNull()?.poster_path?.let { "$TMDB_IMG$it" }
+        }.getOrNull()
+    }
+
+    /** Full TMDB data for detail page */
+    private suspend fun tmdbFull(title: String, year: Int?, isMovie: Boolean): TmdbFullData? {
+        return runCatching {
+            val type = if (isMovie) "movie" else "tv"
+            val q = java.net.URLEncoder.encode(title, "UTF-8")
+            val yp = if (year != null) "&year=$year" else ""
+            val url = "$TMDB_API/search/$type?api_key=$TMDB_KEY&query=$q$yp&language=ar"
+            val resp = app.get(url).text
+            val json = parseJson<TmdbSearchResult>(resp)
             val item = json.results?.firstOrNull() ?: return null
             val tmdbId = item.id ?: return null
-
-            // Get poster
-            val posterPath = item.poster_path
-            val poster = if (posterPath != null) "$TMDB_IMG$posterPath" else null
-            val backdrop = item.backdrop_path?.let { "$TMDB_IMG$it" }
+            val poster = item.poster_path?.let { "$TMDB_IMG$it" }
+            val backdrop = item.backdrop_path?.let { "$TMDB_IMG_ORIG$it" }
             val overview = item.overview
 
-            // Get trailer
             var trailerUrl: String? = null
             runCatching {
-                val videosUrl = "$TMDB_API/$type/$tmdbId/videos?api_key=$TMDB_KEY"
-                val videosResp = app.get(videosUrl).text
-                val videos = parseJson<TmdbVideosResult>(videosResp)
+                val vResp = app.get("$TMDB_API/$type/$tmdbId/videos?api_key=$TMDB_KEY").text
+                val videos = parseJson<TmdbVideosResult>(vResp)
                 val trailer = videos.results?.firstOrNull { v ->
                     v.site == "YouTube" && (v.type == "Trailer" || v.type == "Teaser")
                 }
                 if (trailer != null) trailerUrl = "https://www.youtube.com/watch?v=${trailer.key}"
             }
-
-            TmdbData(poster, backdrop, overview, trailerUrl)
+            TmdbFullData(poster, backdrop, overview, trailerUrl)
         }.getOrNull()
     }
 
-    data class TmdbSearchResult(val results: List<TmdbItem>?)
-    data class TmdbItem(
-        val id: Int?,
-        val poster_path: String?,
-        val backdrop_path: String?,
-        val overview: String?
-    )
-    data class TmdbVideosResult(val results: List<TmdbVideo>?)
-    data class TmdbVideo(val key: String?, val site: String?, val type: String?)
-    data class TmdbData(val poster: String?, val backdrop: String?, val overview: String?, val trailerUrl: String?)
+    data class TmdbFullData(val poster: String?, val backdrop: String?, val overview: String?, val trailer: String?)
 
-    // ── Card parsing ───────────────────────────────────────────────────────────────
+    // ── Card parsing with TMDB poster ─────────────────────────────────────────────
 
-    private fun Element.toCard(): SearchResponse? {
+    private suspend fun Element.toCard(): SearchResponse? {
         val href = absUrl("href").ifBlank { attr("href").toAbs() }.ifBlank { return null }
         if (href.contains("#") || href.contains("javascript")) return null
 
-        // Title: prefer the 'title' attribute on the <a> tag (contains clean title)
+        // Title from a[title] attribute (clean, full title)
         val rawTitle = attr("title").trim().ifBlank {
             selectFirst("div.inner--title h2, h2, .title, h3")?.text()?.trim() ?: ""
         }.ifBlank { return null }
 
-        // Poster: from div.Poster img
-        val poster = selectFirst("div.Poster img, .Poster img, img")
-            ?.attr("src")?.trim()
-            ?.let { if (it.startsWith("http") && !it.contains("logo")) it else null }
+        val isMovie = isMovieUrl(href)
+        val year = extractYear(rawTitle)
 
-        return if (isMovieUrl(href))
+        // Get TMDB poster (since site images return 403 to external loaders)
+        val engTitle = extractEnglish(rawTitle)
+        val tmdbPosterUrl = if (engTitle != null) tmdbPoster(engTitle, year, isMovie) else null
+
+        // Fallback to site poster (might work for some items)
+        val sitePoster = selectFirst("div.Poster img, img")?.attr("src")?.trim()
+            ?.let { if (it.startsWith("http")) it else null }
+
+        val poster = tmdbPosterUrl ?: sitePoster
+
+        return if (isMovie)
             newMovieSearchResponse(rawTitle, href, TvType.Movie) { posterUrl = poster }
         else
             newTvSeriesSearchResponse(rawTitle, href, TvType.TvSeries) { posterUrl = poster }
@@ -159,8 +168,13 @@ class Shahid4uProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val doc = app.get(request.data + page).document
-        val items = doc.select("a.recent--block")
-            .mapNotNull { it.toCard() }.distinctBy { it.url }
+        val cards = doc.select("a.recent--block")
+        val items = mutableListOf<SearchResponse>()
+        for (card in cards) {
+            val item = card.toCard() ?: continue
+            if (items.none { it.url == item.url }) items.add(item)
+            if (items.size >= 15) break // Limit to keep TMDB calls reasonable
+        }
         return newHomePageResponse(request.name, items)
     }
 
@@ -168,48 +182,49 @@ class Shahid4uProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val doc = app.get("$mainUrl/?s=${query.trim().replace(" ", "+")}").document
-        return doc.select("a.recent--block")
-            .mapNotNull { it.toCard() }.distinctBy { it.url }
+        val cards = doc.select("a.recent--block")
+        val items = mutableListOf<SearchResponse>()
+        for (card in cards) {
+            val item = card.toCard() ?: continue
+            if (items.none { it.url == item.url }) items.add(item)
+            if (items.size >= 20) break
+        }
+        return items
     }
 
     // ── Load ───────────────────────────────────────────────────────────────────────
 
     override suspend fun load(url: String): LoadResponse? {
         val doc = app.get(url).document
-
         val rawTitle = doc.selectFirst("h1, .entry-title")?.text()?.trim()
             ?: doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim() ?: ""
-
-        val sitePoster = doc.selectFirst("meta[property=og:image]")?.attr("content")
-            ?: doc.selectFirst("div.Poster img, .thumb img, article img")?.attr("src")
-
-        val sitePlot = doc.selectFirst(".entry-content p, .story-content, .description")?.text()?.trim()
+        val isMovie = isMovieUrl(url)
         val year = extractYear(rawTitle)
         val tags = doc.select("a[href*=/category/]").map { it.text().trim() }.filter { it.isNotBlank() }
-        val isMovie = isMovieUrl(url)
+        val sitePlot = doc.selectFirst(".entry-content p, .story-content, .description")?.text()?.trim()
 
-        // Enrich with TMDB data (poster, trailer, plot)
-        val englishTitle = extractEnglishTitle(rawTitle)
-        val tmdb = if (englishTitle != null) fetchTmdbData(englishTitle, year, isMovie) else null
+        // TMDB enrichment
+        val engTitle = extractEnglish(rawTitle)
+        val tmdb = if (engTitle != null) tmdbFull(engTitle, year, isMovie) else null
 
-        val poster = tmdb?.poster ?: sitePoster
+        val poster = tmdb?.poster
+            ?: doc.selectFirst("meta[property=og:image]")?.attr("content")
         val backdrop = tmdb?.backdrop
         val plot = tmdb?.overview ?: sitePlot
-        val trailerUrl = tmdb?.trailerUrl
+        val trailerUrl = tmdb?.trailer
 
         if (isMovie) {
             return newMovieLoadResponse(rawTitle, url, TvType.Movie, url) {
-                posterUrl = poster
-                this.backgroundPosterUrl = backdrop
+                posterUrl = poster; backgroundPosterUrl = backdrop
                 this.year = year; this.plot = plot; this.tags = tags
                 addTrailer(trailerUrl)
             }
         }
 
-        // Series: collect episodes
+        // Series episodes
         val episodes = mutableListOf<Episode>()
-        doc.select("a[href]").filter { a ->
-            val t = a.text().trim()
+        doc.select("a.recent--block, a[href]").filter { a ->
+            val t = a.attr("title").trim() + a.text().trim()
             val h = a.attr("href")
             (t.contains("الحلقة") || t.contains("حلقة") || h.contains("الحلقة"))
                 && a.absUrl("href").startsWith(mainUrl) && a.absUrl("href") != url
@@ -226,8 +241,7 @@ class Shahid4uProvider : MainAPI() {
 
         return newTvSeriesLoadResponse(rawTitle, url, TvType.TvSeries,
             episodes.distinctBy { it.data }.sortedBy { it.episode }) {
-            posterUrl = poster
-            this.backgroundPosterUrl = backdrop
+            posterUrl = poster; backgroundPosterUrl = backdrop
             this.year = year; this.plot = plot; this.tags = tags
             addTrailer(trailerUrl)
         }
@@ -278,7 +292,6 @@ class Shahid4uProvider : MainAPI() {
                 .forEach { embedUrls.add(it.groupValues[1]) }
         }
 
-        // Resolve each embed
         for (embedUrl in embedUrls.distinct()) {
             if (embedUrl.isBlank()) continue
             try {
