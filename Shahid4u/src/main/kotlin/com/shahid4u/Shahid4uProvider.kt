@@ -6,10 +6,11 @@ import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
+import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.nicehttp.requestCreator
 import org.jsoup.nodes.Element
-import java.util.Base64
+import android.util.Base64 as AndroidBase64
 
 class Shahid4uProvider : MainAPI() {
     override var lang = "ar"
@@ -26,18 +27,47 @@ class Shahid4uProvider : MainAPI() {
         else if (startsWith("/")) "$mainUrl$this"
         else "$mainUrl/$this"
 
-    /** Detect movie by URL slug containing Arabic for "film" encoded */
     private fun isMovieUrl(href: String): Boolean {
         val slug = href.lowercase()
-        return slug.contains("%d9%81%d9%8a%d9%84%d9%85") // "فيلم" encoded
-            || slug.contains("/movies/")
-            || slug.contains("فيلم")
+        return slug.contains("%d9%81%d9%8a%d9%84%d9%85") || slug.contains("فيلم")
+    }
+
+    /** Decode Base64 string safely, returns null on failure */
+    private fun tryDecodeBase64(input: String): String? {
+        return runCatching {
+            val padded = input.trimEnd('/') + "=".repeat((4 - input.trimEnd('/').length % 4) % 4)
+            String(AndroidBase64.decode(padded, AndroidBase64.DEFAULT)).trim()
+        }.getOrNull()
+    }
+
+    /**
+     * govid.live URLs format: https://govid.live/play/BASE64/
+     * The BASE64 decodes to a real embed URL like:
+     *   https://dingtezuni.com/embed/d23jaavabhpv
+     *   https://fsdcmo.sbs/e//hywgw8a7fape 
+     *   https://govid.live/e/34/?pic=BASE64_OF_POSTER
+     * For govid.live/e/ URLs, the HLS m3u8 is served at govid.live/video-{id}.m3u8
+     */
+    private fun resolveGovidUrl(govidPlayUrl: String): List<String> {
+        val results = mutableListOf<String>()
+        val b64 = govidPlayUrl
+            .substringAfter("/play/")
+            .trimEnd('/')
+            .split("?").first()
+        val decoded = tryDecodeBase64(b64) ?: return results
+        if (decoded.startsWith("http")) {
+            results.add(decoded)
+            // If it's a govid.live/e/ URL, also add the govidPlayUrl itself for WebView
+            if (decoded.contains("govid.live/e/")) {
+                results.add(govidPlayUrl)
+            }
+        }
+        return results
     }
 
     // ── Card parsing ───────────────────────────────────────────────────────────────
 
     private fun Element.toCard(): SearchResponse? {
-        // Cards are <a class="recent--block"> with img inside and title in div.inner--title h2
         val href = absUrl("href").ifBlank { attr("href").toAbs() }.ifBlank { return null }
         if (href.contains("#") || href.contains("javascript")) return null
         val img = selectFirst("img") ?: return null
@@ -109,7 +139,6 @@ class Shahid4uProvider : MainAPI() {
 
         // Series: collect episodes from page
         val episodes = mutableListOf<Episode>()
-        // Episode links containing "حلقة" or "episode" in text or href
         doc.select("a[href]").filter { a ->
             val t = a.text().trim()
             val h = a.attr("href")
@@ -143,74 +172,98 @@ class Shahid4uProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val doc = app.get(data).document
+        // The watch page is at {contentUrl}/watch/
+        val watchUrl = if (data.endsWith("/watch/") || data.endsWith("/watch")) data
+                       else data.trimEnd('/') + "/watch/"
+        val doc = app.get(watchUrl).document
+
         var found = false
         val embedUrls = mutableSetOf<String>()
 
-        // govid.live wrapper: /play/BASE64_OF_EMBED_URL  
-        // Decode Base64 to get real embed URL
+        // ── PRIMARY: Read server list from ul#watch li[data-watch] ─────────────────
+        // Each li has data-watch="https://govid.live/play/BASE64_ENCODED_URL"
+        doc.select("ul#watch li[data-watch], .servers li[data-watch]").forEach { li ->
+            val govidUrl = li.attr("data-watch").trim()
+            if (govidUrl.contains("govid.live/play/")) {
+                val resolved = resolveGovidUrl(govidUrl)
+                embedUrls.addAll(resolved)
+            } else if (govidUrl.startsWith("http")) {
+                embedUrls.add(govidUrl)
+            }
+        }
+
+        // ── SECONDARY: Read iframes already rendered ───────────────────────────────
         doc.select("iframe[src]").forEach { iframe ->
             val src = iframe.absUrl("src").ifBlank { iframe.attr("src") }
-            when {
-                src.contains("govid.live/play/") -> {
-                    // Decode Base64 encoded inner URL
-                    runCatching {
-                        val b64 = src.substringAfter("/play/").split("/").first().split("?").first()
-                        val decoded = String(Base64.getDecoder().decode(b64))
-                        if (decoded.startsWith("http")) embedUrls.add(decoded)
-                    }
-                    // Also try the govid URL directly via loadExtractor
-                    embedUrls.add(src)
-                }
-                src.startsWith("http") && !src.contains("disqus") -> embedUrls.add(src)
+            if (src.contains("govid.live/play/")) {
+                embedUrls.addAll(resolveGovidUrl(src))
+            } else if (src.startsWith("http") && !src.contains("disqus")) {
+                embedUrls.add(src)
             }
         }
 
-        // Server tab buttons (onclick or data attributes)
-        val loadIframeRegex = Regex("""loadIframe\s*\(\s*this\s*,\s*['"]([^'"]+)['"]""")
-        val govIdBaseRegex = Regex("""govid\.live/play/([A-Za-z0-9+/=]+)""")
-        doc.select("[onclick]").forEach { el ->
-            val onclick = el.attr("onclick")
-            loadIframeRegex.find(onclick)?.groupValues?.get(1)?.let { u ->
-                if (u.startsWith("http")) embedUrls.add(u)
-            }
-        }
-
-        // Scan scripts for govid.live URLs and direct embed URLs
+        // ── TERTIARY: Scan scripts for additional govid URLs ───────────────────────
+        val govidRegex = Regex("""govid\.live/play/([A-Za-z0-9+/=]+)""")
         doc.select("script").forEach { script ->
             val html = script.html()
-            govIdBaseRegex.findAll(html).forEach { m ->
-                runCatching {
-                    val decoded = String(Base64.getDecoder().decode(m.groupValues[1]))
-                    if (decoded.startsWith("http")) embedUrls.add(decoded)
-                }.onFailure { embedUrls.add("https://govid.live/play/${m.groupValues[1]}") }
+            govidRegex.findAll(html).forEach { m ->
+                val full = "https://govid.live/play/${m.groupValues[1]}"
+                embedUrls.addAll(resolveGovidUrl(full))
             }
-            loadIframeRegex.findAll(html).forEach { m -> embedUrls.add(m.groupValues[1].toAbs()) }
+            // Also look for direct m3u8 URLs
             Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""").findAll(html)
                 .forEach { embedUrls.add(it.groupValues[1]) }
         }
 
+        // ── Resolve each embed URL ─────────────────────────────────────────────────
         for (embedUrl in embedUrls.distinct()) {
             if (embedUrl.isBlank()) continue
             try {
-                if (embedUrl.contains(".m3u8")) {
-                    M3u8Helper.generateM3u8(name, embedUrl, referer = data).forEach { callback(it); found = true }
-                } else {
-                    if (loadExtractor(embedUrl, referer = data, subtitleCallback, callback)) found = true
+                when {
+                    embedUrl.contains(".m3u8") -> {
+                        M3u8Helper.generateM3u8(name, embedUrl, referer = watchUrl)
+                            .forEach { callback(it); found = true }
+                    }
+                    embedUrl.contains("govid.live/e/") -> {
+                        // govid.live's own player: try WebView to intercept the m3u8
+                        runCatching {
+                            val resolved = WebViewResolver(
+                                interceptUrl = Regex(""".*\.(m3u8|mp4).*""")
+                            ).resolveUsingWebView(
+                                requestCreator("GET", embedUrl, referer = watchUrl)
+                            ).first
+                            val videoUrl = resolved?.url?.toString()
+                            if (!videoUrl.isNullOrBlank()) {
+                                if (videoUrl.contains(".m3u8")) {
+                                    M3u8Helper.generateM3u8(name, videoUrl, referer = embedUrl)
+                                        .forEach { callback(it); found = true }
+                                } else {
+                                    callback(ExtractorLink(name, "$name - Govid", videoUrl, embedUrl, Qualities.Unknown.value, false))
+                                    found = true
+                                }
+                            }
+                        }
+                    }
+                    else -> {
+                        // Regular embed (dingtezuni, fsdcmo, uqload, vinovo, doodstream, etc.)
+                        if (loadExtractor(embedUrl, referer = watchUrl, subtitleCallback, callback)) found = true
+                    }
                 }
-            } catch (e: Exception) { /* skip */ }
+            } catch (e: Exception) { /* skip failed extractors */ }
         }
 
-        // WebView fallback
+        // ── LAST RESORT: WebView on the watch page itself ──────────────────────────
         if (!found) {
             try {
                 val resolved = WebViewResolver(
                     interceptUrl = Regex(""".*\.(m3u8|mp4).*""")
-                ).resolveUsingWebView(requestCreator("GET", data, referer = mainUrl)).first
+                ).resolveUsingWebView(
+                    requestCreator("GET", watchUrl, referer = mainUrl)
+                ).first
                 val videoUrl = resolved?.url?.toString()
                 if (!videoUrl.isNullOrBlank()) {
-                    M3u8Helper.generateM3u8(name, videoUrl, referer = data)
-                        .toList().forEach { callback(it); found = true }
+                    M3u8Helper.generateM3u8(name, videoUrl, referer = watchUrl)
+                        .forEach { callback(it); found = true }
                 }
             } catch (e: Exception) { /* ignore */ }
         }
