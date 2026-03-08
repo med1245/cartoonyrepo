@@ -30,7 +30,7 @@ class Shahid4uProvider : MainAPI() {
 
     // ── TMDB data classes ─────────────────────────────────────────────────────────
     data class TmdbSearchResult(val results: List<TmdbItem>?)
-    data class TmdbItem(val id: Int?, val poster_path: String?, val backdrop_path: String?, val overview: String?, val title: String?, val name: String?)
+    data class TmdbItem(val id: Int?, val poster_path: String?, val backdrop_path: String?, val overview: String?, val title: String?, val name: String?, val first_air_date: String?, val release_date: String?)
     data class TmdbVideosResult(val results: List<TmdbVideo>?)
     data class TmdbVideo(val key: String?, val site: String?, val type: String?)
 
@@ -63,10 +63,11 @@ class Shahid4uProvider : MainAPI() {
         return results
     }
 
-    /** Extract English part of a mixed Arabic/English title */
+    /** Extract English title for TMDB search from mixed Arabic/English title */
     private fun extractEnglish(raw: String): String? {
         val cleaned = raw
             .replace(Regex("^(مشاهدة|فيلم|مسلسل|برنامج|انمي|أنمي|كرتون)\\s+", RegexOption.MULTILINE), "")
+            .replace(Regex("(الحلقة|حلقة|الموسم|موسم)\\s+\\d+.*$"), "") // Strip episode/season info
             .replace(Regex("\\s+(مترجم|مدبلج|اون لاين|اونلاين|حصرى|كامل|مترجمة|مدبلجة|صدر عام).*$"), "")
             .trim()
         val eng = Regex("[A-Za-z][A-Za-z0-9':&.,! -]+").findAll(cleaned)
@@ -76,25 +77,27 @@ class Shahid4uProvider : MainAPI() {
 
     private fun extractYear(s: String): Int? = Regex("(19|20)\\d{2}").find(s)?.value?.toIntOrNull()
 
-    /** Quick TMDB poster lookup — just gets poster URL, nothing else */
-    private suspend fun tmdbPoster(title: String, year: Int?, isMovie: Boolean): String? {
+    /** Lookup TMDB poster, optionally by English or Arabic title */
+    private suspend fun tmdbPoster(title: String, year: Int?, isMovie: Boolean, isArabic: Boolean = false): String? {
         return runCatching {
             val type = if (isMovie) "movie" else "tv"
             val q = java.net.URLEncoder.encode(title, "UTF-8")
             val yp = if (year != null) "&year=$year" else ""
-            val url = "$TMDB_API/search/$type?api_key=$TMDB_KEY&query=$q$yp"
+            val lang = if (isArabic) "&language=ar" else ""
+            val url = "$TMDB_API/search/$type?api_key=$TMDB_KEY&query=$q$yp$lang"
             val resp = app.get(url).text
             val json = parseJson<TmdbSearchResult>(resp)
             json.results?.firstOrNull()?.poster_path?.let { "$TMDB_IMG$it" }
         }.getOrNull()
     }
 
-    /** Full TMDB data for detail page */
+    /** Comprehensive TMDB data lookup (poster, backdrop, plot, trailer) */
     private suspend fun tmdbFull(title: String, year: Int?, isMovie: Boolean): TmdbFullData? {
         return runCatching {
             val type = if (isMovie) "movie" else "tv"
             val q = java.net.URLEncoder.encode(title, "UTF-8")
             val yp = if (year != null) "&year=$year" else ""
+            // First search with Arabic to prioritize localized results
             val url = "$TMDB_API/search/$type?api_key=$TMDB_KEY&query=$q$yp&language=ar"
             val resp = app.get(url).text
             val json = parseJson<TmdbSearchResult>(resp)
@@ -119,29 +122,34 @@ class Shahid4uProvider : MainAPI() {
 
     data class TmdbFullData(val poster: String?, val backdrop: String?, val overview: String?, val trailer: String?)
 
-    // ── Card parsing with TMDB poster ─────────────────────────────────────────────
+    // ── Card parsing ─────────────────────────────────────────────────────────────
 
     private suspend fun Element.toCard(): SearchResponse? {
         val href = absUrl("href").ifBlank { attr("href").toAbs() }.ifBlank { return null }
         if (href.contains("#") || href.contains("javascript")) return null
 
-        // Title from a[title] attribute (clean, full title)
+        // Improved title extraction from 'title' attribute
         val rawTitle = attr("title").trim().ifBlank {
             selectFirst("div.inner--title h2, h2, .title, h3")?.text()?.trim() ?: ""
-        }.ifBlank { return null }
+        }.replace("- shahid4u", "", ignoreCase = true).trim()
+        if (rawTitle.isEmpty() || rawTitle.lowercase() == "shahid4u") return null
 
         val isMovie = isMovieUrl(href)
         val year = extractYear(rawTitle)
 
-        // Get TMDB poster (since site images return 403 to external loaders)
+        // Try English first, then Arabic as fallback for MTDB matching
         val engTitle = extractEnglish(rawTitle)
-        val tmdbPosterUrl = if (engTitle != null) tmdbPoster(engTitle, year, isMovie) else null
+        var poster = if (engTitle != null) tmdbPoster(engTitle, year, isMovie) else null
+        if (poster == null) {
+            val cleanAr = rawTitle.replace(Regex("^(مشاهدة|فيلم|مسلسل|برنامج|انمي|أنمي|كرتون)\\s+"), "").trim()
+            poster = tmdbPoster(cleanAr, year, isMovie, isArabic = true)
+        }
 
-        // Fallback to site poster (might work for some items)
-        val sitePoster = selectFirst("div.Poster img, img")?.attr("src")?.trim()
-            ?.let { if (it.startsWith("http")) it else null }
-
-        val poster = tmdbPosterUrl ?: sitePoster
+        // Final site poster fallback
+        if (poster == null) {
+            poster = selectFirst("div.Poster img, img")?.attr("src")?.trim()
+                ?.let { if (it.startsWith("http")) it else null }
+        }
 
         return if (isMovie)
             newMovieSearchResponse(rawTitle, href, TvType.Movie) { posterUrl = poster }
@@ -172,8 +180,10 @@ class Shahid4uProvider : MainAPI() {
         val items = mutableListOf<SearchResponse>()
         for (card in cards) {
             val item = card.toCard() ?: continue
-            if (items.none { it.url == item.url }) items.add(item)
-            if (items.size >= 15) break // Limit to keep TMDB calls reasonable
+            if (items.none { it.url == item.url }) {
+                items.add(item)
+                if (items.size >= 12) break // Reasonable balance between cards and TMDB hits
+            }
         }
         return newHomePageResponse(request.name, items)
     }
@@ -186,8 +196,10 @@ class Shahid4uProvider : MainAPI() {
         val items = mutableListOf<SearchResponse>()
         for (card in cards) {
             val item = card.toCard() ?: continue
-            if (items.none { it.url == item.url }) items.add(item)
-            if (items.size >= 20) break
+            if (items.none { it.url == item.url }) {
+                items.add(item)
+                if (items.size >= 24) break
+            }
         }
         return items
     }
@@ -196,16 +208,28 @@ class Shahid4uProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         val doc = app.get(url).document
-        val rawTitle = doc.selectFirst("h1, .entry-title")?.text()?.trim()
-            ?: doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim() ?: ""
+        
+        // Accurate title from meta or breadcrumb
+        val rawTitle = doc.selectFirst("meta[property=\"og:title\"]")?.attr("content")
+            ?.replace("- shahid4u", "", ignoreCase = true)?.trim()
+            ?: doc.select(".breadcrumb a").lastOrNull()?.text()?.trim()
+            ?: doc.selectFirst("h1")?.text()?.trim() ?: ""
+        
+        if (rawTitle.isEmpty() || rawTitle.lowercase() == "shahid4u") return null
+
         val isMovie = isMovieUrl(url)
         val year = extractYear(rawTitle)
         val tags = doc.select("a[href*=/category/]").map { it.text().trim() }.filter { it.isNotBlank() }
         val sitePlot = doc.selectFirst(".entry-content p, .story-content, .description")?.text()?.trim()
 
-        // TMDB enrichment
+        // Improved TMDB matching
         val engTitle = extractEnglish(rawTitle)
-        val tmdb = if (engTitle != null) tmdbFull(engTitle, year, isMovie) else null
+        val tmdb = if (engTitle != null) {
+            tmdbFull(engTitle, year, isMovie)
+        } else {
+            val cleanAr = rawTitle.replace(Regex("^(مشاهدة|فيلم|مسلسل|برنامج|انمي|أنمي|كرتون)\\s+"), "").trim()
+            tmdbFull(cleanAr, year, isMovie)
+        }
 
         val poster = tmdb?.poster
             ?: doc.selectFirst("meta[property=og:image]")?.attr("content")
@@ -221,22 +245,30 @@ class Shahid4uProvider : MainAPI() {
             }
         }
 
-        // Series episodes
+        // Series episodes - target "جميع الحلقات" section to avoid messy related content
         val episodes = mutableListOf<Episode>()
-        doc.select("a.recent--block, a[href]").filter { a ->
-            val t = a.attr("title").trim() + a.text().trim()
-            val h = a.attr("href")
-            (t.contains("الحلقة") || t.contains("حلقة") || h.contains("الحلقة"))
-                && a.absUrl("href").startsWith(mainUrl) && a.absUrl("href") != url
-        }.forEach { ep ->
+        val episodeContainers = doc.select("div.MediaGrid, .slides--single, div.container")
+            .filter { it.select("h3, h2, h4").any { h -> h.text().contains("جميع الحلقات") || h.text().contains("حلقات") } }
+        
+        val cards = if (episodeContainers.isNotEmpty()) {
+            episodeContainers.flatMap { it.select("a.recent--block") }
+        } else {
+            // Fallback: search results on page that look like episodes
+            doc.select("a.recent--block").filter { it.text().contains("الحلقة") }
+        }
+
+        cards.forEach { ep ->
             val epHref = ep.absUrl("href")
             val epText = ep.attr("title").trim().ifBlank { ep.text().trim() }
             val epNum = Regex("(\\d+)").findAll(epText).lastOrNull()?.value?.toIntOrNull()
-            episodes.add(newEpisode(epHref) {
-                name = epText.ifBlank { "الحلقة $epNum" }
-                episode = epNum
-            })
+            if (epHref.startsWith(mainUrl) && epHref != url) {
+                episodes.add(newEpisode(epHref) {
+                    name = epText.ifBlank { "الحلقة $epNum" }
+                    episode = epNum
+                })
+            }
         }
+        
         if (episodes.isEmpty()) episodes.add(newEpisode(url) { name = rawTitle })
 
         return newTvSeriesLoadResponse(rawTitle, url, TvType.TvSeries,
@@ -261,7 +293,6 @@ class Shahid4uProvider : MainAPI() {
         var found = false
         val embedUrls = mutableSetOf<String>()
 
-        // PRIMARY: Server list from ul#watch li[data-watch]
         doc.select("ul#watch li[data-watch], .servers li[data-watch]").forEach { li ->
             val govidUrl = li.attr("data-watch").trim()
             if (govidUrl.contains("govid.live/play/")) {
@@ -271,7 +302,6 @@ class Shahid4uProvider : MainAPI() {
             }
         }
 
-        // SECONDARY: iframes
         doc.select("iframe[src]").forEach { iframe ->
             val src = iframe.absUrl("src").ifBlank { iframe.attr("src") }
             if (src.contains("govid.live/play/")) {
@@ -279,17 +309,6 @@ class Shahid4uProvider : MainAPI() {
             } else if (src.startsWith("http") && !src.contains("disqus")) {
                 embedUrls.add(src)
             }
-        }
-
-        // TERTIARY: Scripts
-        val govidRegex = Regex("""govid\.live/play/([A-Za-z0-9+/=]+)""")
-        doc.select("script").forEach { script ->
-            val html = script.html()
-            govidRegex.findAll(html).forEach { m ->
-                embedUrls.addAll(resolveGovidUrl("https://govid.live/play/${m.groupValues[1]}"))
-            }
-            Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""").findAll(html)
-                .forEach { embedUrls.add(it.groupValues[1]) }
         }
 
         for (embedUrl in embedUrls.distinct()) {
@@ -324,7 +343,6 @@ class Shahid4uProvider : MainAPI() {
             } catch (e: Exception) { /* skip */ }
         }
 
-        // Last resort WebView
         if (!found) {
             runCatching {
                 val resolved = WebViewResolver(
