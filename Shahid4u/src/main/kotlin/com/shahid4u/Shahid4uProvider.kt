@@ -63,13 +63,17 @@ class Shahid4uProvider : MainAPI() {
         return results
     }
 
-    /** Clean title by stripping all Season/Episode info and common suffixes */
+    /** Ultra-Clean title logic to normalize Arabic variations and strip season/episode tags */
     private fun cleanTitle(raw: String): String {
-        return raw.replace(Regex("^(مشاهدة|فيلم|مسلسل|برنامج|انمي|أنمي|كرتون)\\s+"), "")
+        return raw.lowercase()
+            .replace(Regex("[أإآ]"), "ا") // Normalize Alef
+            .replace(Regex("ة"), "ه")      // Normalize Teh Marbuta (risky but good for grouping)
+            .replace(Regex("^(مشاهدة|فيلم|مسلسل|برنامج|انمي|أنمي|كرتون)\\s+"), "")
             .replace(Regex("\\s+(مترجم|مدبلج|اون لاين|اونلاين|حصرى|كامل|مترجمة|مدبلجة|صدر عام|بجودة|عالية).*$"), "")
-            .replace(Regex("(الموسم|موسم|Season)\\s?([\\d\\wأبجد]+|التاسع|الثامن|السابع|السادس|الخامس|الرابع|الثالث|الثاني|الأول|العاشر)"), "")
-            .replace(Regex("(الحلقة|حلقة|Episode)\\s?[\\d\\w]+"), "")
-            .replace(Regex("- shahid4u", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("(الموسم|موسم|s|season)\\s?([\\d\\w]+|التاسع|الثامن|السابع|السادس|الخامس|الرابع|الثالث|الثاني|الاول|الأول|الأولى|الاولى|العاشر)"), "")
+            .replace(Regex("(الحلقة|حلقة|ep|episode)\\s?[\\d\\w]+"), "")
+            .replace(Regex("- shahid4u"), "")
+            .replace(Regex("\\s+"), " ")
             .trim()
     }
 
@@ -138,13 +142,13 @@ class Shahid4uProvider : MainAPI() {
         val isMovie = isMovieUrl(href)
         val year = extractYear(rawTitle)
         val engTitle = extractEnglish(rawTitle)
-        val cleanedTitle = cleanTitle(rawTitle)
+        val ultClean = cleanTitle(rawTitle)
 
-        // Force TMDB poster
+        // Force TMDB poster using ultra-cleaned title
         var poster = if (engTitle != null) tmdbPoster(engTitle, year, isMovie) else null
-        if (poster == null) poster = tmdbPoster(cleanedTitle, year, isMovie, isArabic = true)
+        if (poster == null) poster = tmdbPoster(ultClean, year, isMovie, isArabic = true)
         
-        // Final fallback to site metadata if TMDB fails
+        // Final fallback to site metadata
         if (poster == null) {
             poster = selectFirst("div.Poster img, img")?.attr("src")?.trim()
                 ?.let { if (it.startsWith("http")) it else null }
@@ -179,11 +183,11 @@ class Shahid4uProvider : MainAPI() {
         val items = mutableListOf<SearchResponse>()
         for (card in rawCards) {
             val item = card.toCard() ?: continue
-            // Grouping: Only add one card per series/movie title
+            // Grouping: Deduplicate episodes by ultra-cleaned title
             val cleanName = cleanTitle(item.name)
             if (items.none { cleanTitle(it.name) == cleanName }) {
                 items.add(item)
-                if (items.size >= 24) break
+                if (items.size >= 30) break
             }
         }
         return newHomePageResponse(request.name, items)
@@ -198,7 +202,7 @@ class Shahid4uProvider : MainAPI() {
             val cleanName = cleanTitle(item.name)
             if (items.none { cleanTitle(it.name) == cleanName }) {
                 items.add(item)
-                if (items.size >= 30) break
+                if (items.size >= 40) break
             }
         }
         return items
@@ -209,13 +213,18 @@ class Shahid4uProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         var doc = app.get(url).document
         
-        // 1. Grouping Logic: Resolve the Parent Series page if we are on an episode page
-        val seriesLink = doc.selectFirst("div[itemtype*=\"TVSeries\"] a[itemprop=\"url\"]")?.absUrl("href") ?:
-                        doc.selectFirst("div[itemtype*=\"TVSeries\"] meta[itemprop=\"url\"]")?.attr("content")?.toAbs()
+        // 1. Resolve Root Series URL if on an episode page
+        val altSeriesLink = doc.selectFirst("div[itemtype*=\"TVSeries\"] a[itemprop=\"url\"]")?.absUrl("href") ?:
+                           doc.selectFirst("div[itemtype*=\"TVSeries\"] meta[itemprop=\"url\"]")?.attr("content")?.toAbs() ?:
+                           doc.select(".breadcrumb a").firstOrNull { it.attr("href").contains("/series/") }?.absUrl("href")
         
-        if (!seriesLink.isNullOrBlank() && seriesLink != url) {
-            doc = app.get(seriesLink).document
-        }
+        // Force full episode list by adding ?episodes=1 as found in probe
+        val forceEpsLink = altSeriesLink?.let { if (it.contains("?")) "$it&episodes=1" else "$it?episodes=1" }
+
+        val loadedUrl = if (!forceEpsLink.isNullOrBlank() && forceEpsLink != url) {
+            doc = app.get(forceEpsLink).document
+            forceEpsLink
+        } else url
 
         val rawTitle = doc.selectFirst("meta[property=\"og:title\"]")?.attr("content")
             ?.replace("- shahid4u", "", ignoreCase = true)?.trim()
@@ -223,31 +232,31 @@ class Shahid4uProvider : MainAPI() {
         
         if (rawTitle.isEmpty() || rawTitle.lowercase() == "shahid4u") return null
 
-        val isMovie = isMovieUrl(url) || !doc.select("h3, h2").any { it.text().contains("حلقة") || it.text().contains("الحلقات") }
+        val isMovie = isMovieUrl(url) && !doc.select("h3, h2").any { it.text().contains("حلقة") || it.text().contains("الحلقات") || it.text().contains("Episode") }
         val year = extractYear(rawTitle)
-        val tags = doc.select("a[href*=/category/]").map { it.text().trim() }.filter { it.isNotBlank() }
+        val tags = doc.select("a[href*=/category/], a[href*=/tag/]").map { it.text().trim() }.filter { it.isNotBlank() }
         val sitePlot = doc.selectFirst(".entry-content p, .story-content, .description")?.text()?.trim()
 
-        val engTitle = extractEnglish(rawTitle)
         val tmdb = tmdbFull(rawTitle, year, isMovie)
 
-        val poster = tmdb?.poster ?: doc.selectFirst("meta[property=og:image]")?.attr("content")
+        val poster = tmdb?.poster ?: doc.selectFirst("meta[property=\"og:image\"]")?.attr("content")
         val backdrop = tmdb?.backdrop
         val plot = tmdb?.overview ?: sitePlot
         val trailerUrl = tmdb?.trailer
 
         if (isMovie) {
-            return newMovieLoadResponse(rawTitle, url, TvType.Movie, url) {
+            return newMovieLoadResponse(rawTitle, loadedUrl, TvType.Movie, loadedUrl) {
                 posterUrl = poster; backgroundPosterUrl = backdrop
                 this.year = year; this.plot = plot; this.tags = tags
                 addTrailer(trailerUrl)
             }
         }
 
-        // Series: Gather all episodes from the Series/Season page
+        // Series: Extract all episodes from the resolved Series page
         val episodes = mutableListOf<Episode>()
-        // Target specifically search results on the series page which list the episodes
-        val cards = doc.select("a.recent--block").filter { it.text().contains("الحلقة") || it.select(".number").isNotEmpty() }
+        // Looking for all cards in sections like 'BlocksHolder' or 'MediaGrid'
+        val cards = doc.select("a.recent--block, .Small--Box a")
+            .filter { it.text().contains("الحلقة") || it.select(".number").isNotEmpty() || it.attr("title").contains("الحلقة") }
         
         cards.forEach { ep ->
             val epHref = ep.absUrl("href")
@@ -262,8 +271,8 @@ class Shahid4uProvider : MainAPI() {
         
         if (episodes.isEmpty()) episodes.add(newEpisode(url) { name = rawTitle })
 
-        return newTvSeriesLoadResponse(rawTitle, url, TvType.TvSeries,
-            episodes.distinctBy { it.data }.sortedBy { it.episode }) {
+        return newTvSeriesLoadResponse(rawTitle, loadedUrl, TvType.TvSeries,
+            episodes.distinctBy { it.data }.sortedByDescending { it.episode }) { // Usually desc in Arabic sites
             posterUrl = poster; backgroundPosterUrl = backdrop
             this.year = year; this.plot = plot; this.tags = tags
             addTrailer(trailerUrl)
