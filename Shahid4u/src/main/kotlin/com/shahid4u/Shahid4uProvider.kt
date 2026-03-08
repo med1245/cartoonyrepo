@@ -63,6 +63,14 @@ class Shahid4uProvider : MainAPI() {
         return results
     }
 
+    /** Wraps site-hosted image URLs in JSON with Referer/User-Agent to bypass 403 Forbidden */
+    private fun fixPoster(url: String?): String? {
+        if (url == null || !url.contains("shahid4u")) return url
+        val referer = "$mainUrl/"
+        val ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        return "{\"url\":\"$url\", \"headers\":{\"Referer\":\"$referer\", \"User-Agent\":\"$ua\"}}"
+    }
+
     /** Ultra-Clean title logic to normalize Arabic variations and strip season/episode tags */
     private fun cleanTitle(raw: String): String {
         return raw.lowercase()
@@ -148,10 +156,10 @@ class Shahid4uProvider : MainAPI() {
         var poster = if (engTitle != null) tmdbPoster(engTitle, year, isMovie) else null
         if (poster == null) poster = tmdbPoster(ultClean, year, isMovie, isArabic = true)
         
-        // Final fallback to site metadata
+        // Final fallback to site metadata with header spoofing
         if (poster == null) {
             poster = selectFirst("div.Poster img, img")?.attr("src")?.trim()
-                ?.let { if (it.startsWith("http")) it else null }
+                ?.let { if (it.startsWith("http")) fixPoster(it) else null }
         }
 
         return if (isMovie)
@@ -239,7 +247,7 @@ class Shahid4uProvider : MainAPI() {
 
         val tmdb = tmdbFull(rawTitle, year, isMovie)
 
-        val poster = tmdb?.poster ?: doc.selectFirst("meta[property=\"og:image\"]")?.attr("content")
+        val poster = tmdb?.poster ?: fixPoster(doc.selectFirst("meta[property=\"og:image\"]")?.attr("content"))
         val backdrop = tmdb?.backdrop
         val plot = tmdb?.overview ?: sitePlot
         val trailerUrl = tmdb?.trailer
