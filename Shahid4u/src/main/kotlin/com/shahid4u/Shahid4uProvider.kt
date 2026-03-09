@@ -3,13 +3,11 @@ package com.shahid4u
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
-import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
-import com.lagradost.nicehttp.requestCreator
 import org.jsoup.nodes.Element
 import android.util.Base64 as AndroidBase64
 
@@ -144,10 +142,10 @@ class Shahid4uProvider : MainAPI() {
 
         val isMovie = isMovieUrl(href)
 
-        // Grab poster directly from the card's img tag — no TMDB calls here (TMDB is fetched in load())
-        val poster = selectFirst("div.Poster img, img.Poster, img[src*='wp-content'], img")
-            ?.attr("src")?.trim()
-            ?.let { src -> if (src.startsWith("http")) src else null }
+        // Grab poster from card img — site lazy-loads: real URL is in data-src, placeholder in src
+        val imgEl = selectFirst("div.Poster img, img.Poster, img")
+        val poster = (imgEl?.attr("data-src")?.trim()?.takeIf { it.startsWith("http") }
+            ?: imgEl?.attr("src")?.trim()?.takeIf { it.startsWith("http") && !it.contains("cover.jpg") })
 
         return if (isMovie)
             newMovieSearchResponse(rawTitle, href, TvType.Movie) { posterUrl = poster }
@@ -308,18 +306,36 @@ class Shahid4uProvider : MainAPI() {
                             .forEach { callback(it); found = true }
                     }
                     embedUrl.contains("govid.live/e/") -> {
+                        // Fast extraction: fetch embed page, hex-decode the Mohix JS variable
                         runCatching {
-                            val resolved = WebViewResolver(
-                                interceptUrl = Regex(""".*\.(m3u8|mp4).*""")
-                            ).resolveUsingWebView(requestCreator("GET", embedUrl, referer = watchUrl)).first
-                            val videoUrl = resolved?.url?.toString()
-                            if (!videoUrl.isNullOrBlank()) {
+                            val html = app.get(
+                                embedUrl,
+                                headers = mapOf(
+                                    "Referer" to watchUrl,
+                                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"
+                                )
+                            ).text
+                            // Mohix holds the hex-encoded stream URL
+                            val hexVal = Regex("""(?:var|let|const)\s+Mohix\s*=\s*["']([0-9a-fA-F]+)["']""").find(html)?.groupValues?.get(1)
+                                ?: Regex("""Mohix\s*=\s*["']([0-9a-fA-F]+)["']""").find(html)?.groupValues?.get(1)
+                            if (!hexVal.isNullOrBlank()) {
+                                val videoUrl = hexVal.chunked(2)
+                                    .map { it.toInt(16).toChar() }
+                                    .joinToString("")
+                                    .trim()
                                 if (videoUrl.contains(".m3u8")) {
                                     M3u8Helper.generateM3u8(name, videoUrl, referer = embedUrl)
                                         .forEach { callback(it); found = true }
-                                } else {
+                                } else if (videoUrl.startsWith("http")) {
                                     callback(ExtractorLink(name, "$name - Govid", videoUrl, embedUrl, Qualities.Unknown.value, false))
                                     found = true
+                                }
+                            } else {
+                                // Fallback: look for sources array or direct m3u8 in JS
+                                val m3u8Direct = Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""").find(html)?.groupValues?.get(1)
+                                if (!m3u8Direct.isNullOrBlank()) {
+                                    M3u8Helper.generateM3u8(name, m3u8Direct, referer = embedUrl)
+                                        .forEach { callback(it); found = true }
                                 }
                             }
                         }
