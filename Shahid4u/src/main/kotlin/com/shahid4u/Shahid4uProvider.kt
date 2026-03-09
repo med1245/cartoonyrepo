@@ -17,7 +17,7 @@ class Shahid4uProvider : MainAPI() {
     override var lang = "ar"
     override var mainUrl = "https://shahid4u.casa"
     override var name = "Shahid4u"
-    override val usesWebView = true
+    override val usesWebView = false
     override val hasMainPage = true
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie, TvType.Anime)
 
@@ -63,13 +63,8 @@ class Shahid4uProvider : MainAPI() {
         return results
     }
 
-    /** Wraps site-hosted image URLs in JSON with Referer/User-Agent to bypass 403 Forbidden */
-    private fun fixPoster(url: String?): String? {
-        if (url == null || !url.contains("shahid4u")) return url
-        val referer = "$mainUrl/"
-        val ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        return "{\"url\":\"$url\", \"headers\":{\"Referer\":\"$referer\", \"User-Agent\":\"$ua\"}}"
-    }
+    /** Returns the poster URL as-is — CloudStream handles loading; JSON header wrapping caused black posters */
+    private fun fixPoster(url: String?): String? = url?.trim()?.ifBlank { null }
 
     /** Ultra-Clean title logic to normalize Arabic variations and strip season/episode tags */
     private fun cleanTitle(raw: String): String {
@@ -138,7 +133,7 @@ class Shahid4uProvider : MainAPI() {
 
     // ── Card parsing ─────────────────────────────────────────────────────────────
 
-    private suspend fun Element.toCard(): SearchResponse? {
+    private fun Element.toCard(): SearchResponse? {
         val href = absUrl("href").ifBlank { attr("href").toAbs() }.ifBlank { return null }
         if (href.contains("#") || href.contains("javascript")) return null
 
@@ -148,19 +143,11 @@ class Shahid4uProvider : MainAPI() {
         if (rawTitle.isEmpty() || rawTitle.lowercase() == "shahid4u") return null
 
         val isMovie = isMovieUrl(href)
-        val year = extractYear(rawTitle)
-        val engTitle = extractEnglish(rawTitle)
-        val ultClean = cleanTitle(rawTitle)
 
-        // Force TMDB poster using ultra-cleaned title
-        var poster = if (engTitle != null) tmdbPoster(engTitle, year, isMovie) else null
-        if (poster == null) poster = tmdbPoster(ultClean, year, isMovie, isArabic = true)
-        
-        // Final fallback to site metadata with header spoofing
-        if (poster == null) {
-            poster = selectFirst("div.Poster img, img")?.attr("src")?.trim()
-                ?.let { if (it.startsWith("http")) fixPoster(it) else null }
-        }
+        // Grab poster directly from the card's img tag — no TMDB calls here (TMDB is fetched in load())
+        val poster = selectFirst("div.Poster img, img.Poster, img[src*='wp-content'], img")
+            ?.attr("src")?.trim()
+            ?.let { src -> if (src.startsWith("http")) src else null }
 
         return if (isMovie)
             newMovieSearchResponse(rawTitle, href, TvType.Movie) { posterUrl = poster }
