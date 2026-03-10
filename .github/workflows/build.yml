@@ -76,15 +76,15 @@ jobs:
           SHORT_SHA=${GITHUB_SHA:0:8}
           cp build/plugins.json $GITHUB_WORKSPACE/builds/plugins-${SHORT_SHA}.json
           cat > $GITHUB_WORKSPACE/builds/repo.json <<EOF
-          {
-            "name": "Cartoony Repo",
-            "description": "Arabic Cartoony provider",
-            "manifestVersion": 1,
-            "pluginLists": [
-              "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/builds/plugins-${SHORT_SHA}.json"
-            ]
-          }
-          EOF
+{
+  "name": "Cartoony Repo",
+  "description": "Arabic Cartoony provider",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/builds/plugins-${SHORT_SHA}.json"
+  ]
+}
+EOF
 
       - name: Deploy to builds branch
         uses: peaceiris/actions-gh-pages@v4
