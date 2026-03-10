@@ -5,7 +5,6 @@ import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.nicehttp.requestCreator
 import org.jsoup.nodes.Element
-import kotlinx.coroutines.delay
 import com.lagradost.cloudstream3.CommonActivity.showToast
 import android.widget.Toast
 
@@ -231,9 +230,6 @@ class FaselHDX : MainAPI() {
                         extractedUrls.add("$qualityText|||$videoUrl")
                     }
                 }
-
-                // Give WebView script time to execute
-                delay(500)
 
                 // Emit all extracted URLs as ExtractorLinks
                 for (entry in extractedUrls) {
