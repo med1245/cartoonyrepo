@@ -1,6 +1,7 @@
 package com.faselhd
 
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.nicehttp.requestCreator
@@ -27,6 +28,8 @@ class FaselHDX : MainAPI() {
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
     }
 
+    private val cfKiller = CloudflareKiller()
+
     private val defaultHeaders = mapOf(
         "User-Agent" to USER_AGENT,
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -48,7 +51,7 @@ class FaselHDX : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page == 1) request.data else "${request.data.trimEnd('/')}/page/$page"
-        val doc = app.get(url, headers = defaultHeaders).document
+        val doc = app.get(url, headers = defaultHeaders, interceptor = cfKiller).document
         val list = doc.select("div.postDiv").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(request.name, list)
     }
@@ -84,12 +87,12 @@ class FaselHDX : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val doc = app.get("$mainUrl/?s=$query", headers = defaultHeaders).document
+        val doc = app.get("$mainUrl/?s=$query", headers = defaultHeaders, interceptor = cfKiller).document
         return doc.select("div.postDiv").mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val doc = app.get(url, headers = defaultHeaders).document
+        val doc = app.get(url, headers = defaultHeaders, interceptor = cfKiller).document
 
         val title = doc.selectFirst("div.title")?.text() ?: doc.selectFirst("title")?.text() ?: ""
         val poster = doc.selectFirst("div.posterImg img")?.attr("src")
