@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.nicehttp.requestCreator
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
@@ -41,12 +42,15 @@ class FaselHDX : MainAPI() {
         "$mainUrl/anime-movies"  to "أفلام أنمي",
     )
 
-    /** GET with automatic Cloudflare bypass if the response is a challenge page. */
+    /**
+     * GET with automatic Cloudflare bypass.
+     * Tries plain HTTP first; if Cloudflare challenge is detected, retries with cfKiller.
+     */
     private suspend fun cfGet(url: String, referer: String? = null): Document {
-        var doc = app.get(url, referer = referer, headers = mapOf("User-Agent" to USER_AGENT)).document
+        val headers = mapOf("User-Agent" to USER_AGENT)
+        var doc = app.get(url, referer = referer, headers = headers).document
         if (doc.selectFirst("title")?.text()?.contains("Just a moment", ignoreCase = true) == true) {
-            doc = app.get(url, referer = referer, interceptor = cfKiller,
-                headers = mapOf("User-Agent" to USER_AGENT)).document
+            doc = app.get(url, referer = referer, interceptor = cfKiller, headers = headers).document
         }
         return doc
     }
@@ -63,16 +67,13 @@ class FaselHDX : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val href  = selectFirst("a")?.attr("href")?.trim() ?: return null
-        // Try multiple title selector patterns used across FaselHD domains
+        val href = selectFirst("a")?.attr("href")?.trim() ?: return null
         val title = selectFirst(".h1, .h4, div.h1, div.h4, div.postInner div.h1")
             ?.text()?.trim() ?: return null
-
         val img = selectFirst("div.imgdiv-class img") ?: selectFirst("img")
         var posterUrl = img?.attr("data-src")?.ifEmpty { img.attr("src") }
         if (!posterUrl.isNullOrEmpty() && posterUrl.startsWith("//"))
             posterUrl = "https:$posterUrl"
-
         val quality = selectFirst("span.quality")?.text()
         return newMovieSearchResponse(title, href, TvType.Movie) {
             this.posterUrl = posterUrl
@@ -90,12 +91,11 @@ class FaselHDX : MainAPI() {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Load (Movie / Series detail page)
+    // Load (detail page)
     // ──────────────────────────────────────────────────────────────────────────
 
     override suspend fun load(url: String): LoadResponse? {
         val doc = cfGet(url)
-
         val title = doc.selectFirst(".singleInfo .title, div.title")?.ownText()?.trim()
             ?: doc.selectFirst("title")?.text()?.replace(" - فاصل إعلاني", "")?.trim()
             ?: ""
@@ -109,13 +109,10 @@ class FaselHDX : MainAPI() {
             ?.text()?.substringAfter(":")?.trim()?.filter(Char::isDigit)?.toIntOrNull()
 
         val episodes = doc.select("div#epAll a").mapNotNull { el ->
-            val epUrl   = el.attr("href").trim().ifEmpty { return@mapNotNull null }
+            val epUrl = el.attr("href").trim().ifEmpty { return@mapNotNull null }
             val epTitle = el.text().trim()
-            val epNum   = Regex("""الحلقة\s*(\d+)""").find(epTitle)?.groupValues?.get(1)?.toIntOrNull()
-            newEpisode(epUrl) {
-                name    = epTitle
-                episode = epNum
-            }
+            val epNum = Regex("""الحلقة\s*(\d+)""").find(epTitle)?.groupValues?.get(1)?.toIntOrNull()
+            newEpisode(epUrl) { name = epTitle; episode = epNum }
         }
 
         val recommendations = doc.select("div.postDiv").mapNotNull { it.toSearchResult() }
@@ -139,7 +136,7 @@ class FaselHDX : MainAPI() {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Load Links (video extraction)
+    // Load Links (video extraction)  – three-stage approach
     // ──────────────────────────────────────────────────────────────────────────
 
     override suspend fun loadLinks(
@@ -150,7 +147,7 @@ class FaselHDX : MainAPI() {
     ): Boolean {
         val doc = cfGet(data)
 
-        // ── 1. Try direct download link (fastest path) ──────────────────────
+        // ── Stage 1: Direct download link (fastest, no WebView) ─────────────
         val downloadHref = doc.select(".downloadLinks a").attr("href")
         if (downloadHref.isNotBlank()) {
             try {
@@ -168,58 +165,79 @@ class FaselHDX : MainAPI() {
             } catch (_: Exception) {}
         }
 
-        // ── 2. Find player iframe URL ────────────────────────────────────────
-        var iframeSrc = doc.select(
+        // ── Locate player iframe URL ─────────────────────────────────────────
+        val iframeSrc = doc.select(
             "iframe[name=\"player_iframe\"], iframe[src*=\"video_player\"]"
-        ).attr("src")
-
-        if (iframeSrc.isBlank()) {
-            // Try onclick tab links
+        ).attr("src").ifEmpty {
+            // fallback: onclick tab
             val onclick = doc.selectFirst("ul.tabs-ul li[onclick], li.active[onclick]")
                 ?.attr("onclick")
-            val tabUrl = Regex("""'([^']+)'""").find(onclick ?: "")
-                ?.groupValues?.get(1)?.let { fixUrl(it) }
-            if (tabUrl != null) {
-                iframeSrc = cfGet(tabUrl, referer = data)
-                    .select("iframe[name=\"player_iframe\"]")
-                    .attr("src")
-            }
+            Regex("""'([^']+)'""").find(onclick ?: "")
+                ?.groupValues?.get(1)?.let { fixUrl(it) } ?: ""
         }
 
         if (iframeSrc.isBlank()) return false
 
-        // ── 3. WebView resolves player iframe ────────────────────────────────
+        // ── Stage 2: Fetch player HTML via HTTP + cfKiller, scan for m3u8 ───
+        // This avoids the WebView entirely and bypasses CF via HTTP.
+        try {
+            val playerText = app.get(
+                iframeSrc,
+                referer = data,
+                interceptor = cfKiller,
+                headers = mapOf("User-Agent" to USER_AGENT)
+            ).text
+
+            // Remove obfuscation (concatenated strings)
+            val cleaned = playerText.replace(Regex("""['"]\s*\+\s*['"]"""), "")
+
+            val videoUrl = Regex("""https?://[^\s"'\\]+\.m3u8[^\s"'\\]*""").find(cleaned)?.value
+            if (!videoUrl.isNullOrBlank()) {
+                M3u8Helper.generateM3u8(name, videoUrl, referer = mainUrl).forEach(callback)
+                return true
+            }
+            // Also try mp4
+            val mp4Url = Regex("""https?://[^\s"'\\]+\.mp4[^\s"'\\]*""").find(cleaned)?.value
+            if (!mp4Url.isNullOrBlank()) {
+                callback.invoke(
+                    newExtractorLink(name, "$name MP4", mp4Url, ExtractorLinkType.VIDEO) {
+                        this.referer = iframeSrc
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+                return true
+            }
+        } catch (_: Exception) {}
+
+        // ── Stage 3: WebView with CF cookies passed in headers ───────────────
+        // Pass the Cloudflare cookies we already have so the WebView doesn't
+        // hit the challenge page again.
         return try {
-            val resolver = WebViewResolver(
-                interceptUrl = Regex("""master\.m3u8"""),
-                // Click the play button so the HLS stream request fires
+            val cfHeaders = cfKiller.getCookieHeaders(mainUrl).toMap()
+            val resolver  = WebViewResolver(
+                interceptUrl = Regex("""\.m3u8"""),
                 script = """
                     (function() {
-                        var selectors = [
-                            '.play-button', '.btn-play', 'button.play',
-                            '.play-btn', '.vjs-big-play-button', '.jw-icon-display'
-                        ];
-                        for (var i = 0; i < selectors.length; i++) {
-                            var btn = document.querySelector(selectors[i]);
-                            if (btn) { btn.click(); break; }
+                        var sels = ['.play-button','.btn-play','button.play',
+                                    '.play-btn','.vjs-big-play-button','.jw-icon-display'];
+                        for (var i = 0; i < sels.length; i++) {
+                            var el = document.querySelector(sels[i]);
+                            if (el) { el.click(); break; }
                         }
                     })();
                 """.trimIndent()
             )
-
-            val masterUrl = resolver.resolveUsingWebView(iframeSrc, referer = data)
-                .first?.url?.toString()
-
-            if (!masterUrl.isNullOrBlank() && masterUrl.contains(".m3u8")) {
-                // generateM3u8 downloads the playlist and emits one link per quality
-                M3u8Helper.generateM3u8(name, masterUrl, referer = mainUrl)
-                    .forEach(callback)
+            val result = resolver.resolveUsingWebView(
+                requestCreator(
+                    "GET", iframeSrc,
+                    headers = mapOf("User-Agent" to USER_AGENT, "Referer" to data) + cfHeaders
+                )
+            )
+            val videoUrl = result.first?.url?.toString()
+            if (!videoUrl.isNullOrBlank() && videoUrl.contains(".m3u8")) {
+                M3u8Helper.generateM3u8(name, videoUrl, referer = mainUrl).forEach(callback)
                 true
-            } else {
-                false
-            }
-        } catch (_: Exception) {
-            false
-        }
+            } else false
+        } catch (_: Exception) { false }
     }
 }
