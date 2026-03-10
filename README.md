@@ -1,58 +1,90 @@
-**⚠️ This is currently under development, dont use it yet if you're not comfortable with constantly merging new changes**
+# 🎬 CartoonyRepo - إضافات كلاود ستريم عربية
 
-# `Cloudstream3 Plugin Repo Template`
+<p align="center">
+  <img src="https://img.shields.io/badge/Project-CartoonyRepo-blueviolet?style=for-the-badge&logo=android" alt="CartoonyRepo">
+  <img src="https://img.shields.io/badge/Kotlin-Expert-7F52FF?style=for-the-badge&logo=kotlin" alt="Kotlin">
+  <img src="https://img.shields.io/badge/Status-Active-green?style=for-the-badge" alt="Status">
+  <img src="https://img.shields.io/github/stars/med1245/cartoonyrepo?style=for-the-badge&color=yellow" alt="Stars">
+</p>
 
-Template for a [Cloudstream3](https://github.com/recloudstream) plugin repo
+<p align="center">
+  <strong>إضافات كلاود ستريم عربية — أفلام، مسلسلات، وكرتون. نظيفة، سريعة، وجاهزة للاستخدام.</strong>
+</p>
 
-**⚠️ Make sure you check "Include all branches" when using this template**
+---
 
- 
-## Getting started with writing your first plugin
+## 📊 الإحصائيات
+- **الإضافات النشطة**: 6+ إضافات
+- **أنواع المحتوى**: أفلام، مسلسلات، كرتون، أنمي
+- **اللغة**: العربية
+- **المنصات**: Android، Android TV
 
-This template includes 1 example plugin.
+---
 
-1. Open the root build.gradle.kts, read the comments and replace all the placeholders
-2. Familiarize yourself with the project structure. Most files are commented
-3. Build or deploy your first plugin using:
-   - Windows: `.\gradlew.bat ExampleProvider:make` or `.\gradlew.bat ExampleProvider:deployWithAdb`
-   - Linux & Mac: `./gradlew ExampleProvider:make` or `./gradlew ExampleProvider:deployWithAdb`
+## 📦 دليل الإضافات
 
+> [!IMPORTANT]
+> جميع الإضافات المذكورة أدناه تعمل بكامل طاقتها ومحدّثة باستمرار.
 
-## Granting All Files Access on Newer Android Devices
+### ✅ نشطة ومحسّنة
 
-For local plugin testing, you need to grant the app "All Files Access" on newer Android devices (Android 11 and above). Here’s how to do it:
+| الإضافة | النوع | الوصف |
+| :--- | :--- | :--- |
+| **Cartoony** | كرتون للأطفال | إضافة الكرتون العربي الرئيسية |
+| **Carateen** | كرتون ومحتوى شبابي | محتوى ترفيهي للمراهقين |
+| **Shahid4u** | أفلام ومسلسلات | أفلام ومسلسلات عربية وأجنبية |
+| **FaselHDX** | أفلام ومسلسلات عالية الجودة | محتوى HD و4K |
+| **ArabicToons** | كرتون عربي | رسوم متحركة عربية متنوعة |
+| **ConanAraby** | كرتون | مسلسل المحقق كونان مدبلج عربي |
+| **AnimeZid** | أنمي | أنمي مترجم عربي |
+| **Egibest** | أفلام ومسلسلات | محتوى متنوع |
 
-### Using ADB
+---
 
-* `adb shell appops set --uid PACKAGE_NAME MANAGE_EXTERNAL_STORAGE allow`
-* Replace `PACKAGE_NAME` with the name of the package for the Cloudstream3 version you are using:
-   - debug: `com.lagradost.cloudstream3.prerelease.debug`
-   - prerelease: `com.lagradost.cloudstream3.prerelease`
-   - stable: `com.lagradost.cloudstream3`
+## 🚀 التثبيت والإعداد
 
-### Manually
+### المستودعات الفورية (الطريقة السهلة)
 
-1. **Open Settings**: Go to your device’s Settings menu.
+يمكنك إضافة هذا المستودع مباشرةً في **CloudStream** باستخدام الرابط التالي:
 
-2. **Navigate to Special Access**:
-   - Tap on "Apps & notifications" or "Apps".
-   - Select "Special app access" or "Special access".
+```text
+https://raw.githubusercontent.com/med1245/cartoonyrepo/builds/repo.json
+```
 
-3. **Select All Files Access**:
-   - Tap on "All files access".
-   - It may be under the three vertical dots menu towards the top of the screen.
+#### خطوات الإضافة:
+1. افتح تطبيق **CloudStream**
+2. اذهب إلى **الإعدادات** ← **المستودعات** (Settings → Repositories)
+3. اضغط **إضافة** (Add)
+4. انسخ والصق الرابط أعلاه
+5. اضغط **موافق** وانتظر تحميل الإضافات
 
-4. **Grant Access to the App**: Find the app in the list and tap on it to toggle it, if it is not already enabled.
+> [!TIP]
+> تأكد من أن لديك إصدار CloudStream 3.x أو أحدث لضمان التوافق الكامل.
 
-6. **Restart the App**: Close and reopen the app to apply the changes.
+---
 
+## 🔧 البناء اليدوي
 
-## License
+```bash
+# Windows
+.\gradlew.bat <PluginName>:make
 
-Everything in this repo is released into the public domain. You may use it however you want with no conditions whatsoever
+# Linux & Mac
+./gradlew <PluginName>:make
+```
 
+---
 
-## Attribution
+## 📝 الحقوق والترخيص
 
-This template as well as the gradle plugin and the whole plugin system is **heavily** based on [Aliucord](https://github.com/Aliucord).
-*Go use it, it's a great mobile discord client mod!*
+> [!NOTE]
+> هذا المستودع مفتوح المصدر ومرخص للاستخدام الحر.
+> تمت الكتابة والصيانة بواسطة **[med1245](https://github.com/med1245)**.
+
+مرخص تحت **Public Domain** — يمكنك استخدامه كيفما تشاء بدون أي قيود.
+
+---
+
+<p align="center">
+  ⭐ <strong>ادعم المشروع بوضع نجمة للمستودع!</strong> ⭐
+</p>
