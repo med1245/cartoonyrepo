@@ -1,4 +1,4 @@
-version = 20
+version = 21
 
 cloudstream {
     description = "Arabic movies, series, anime and dramas from FaselHD (faselhdx.bid)"
