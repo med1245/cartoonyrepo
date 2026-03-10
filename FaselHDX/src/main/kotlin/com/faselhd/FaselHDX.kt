@@ -139,7 +139,7 @@ class FaselHDX : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val doc = app.get(data, headers = defaultHeaders).document
+        val doc = app.get(data, headers = defaultHeaders, interceptor = cfKiller).document
 
         // Extract the player iframe URL
         val playerIframe = doc.selectFirst("iframe[name=\"player_iframe\"], iframe[src*=\"video_player\"]")
@@ -158,56 +158,63 @@ class FaselHDX : MainAPI() {
         if (!playerUrl.isNullOrEmpty()) {
             showToast("يرجى الانتظار بضع ثوانٍ حتى يبدأ المشغل...", Toast.LENGTH_SHORT)
             try {
-                // Method 1: Use WebViewResolver to intercept m3u8 network requests
+                // Method 1: Use WebViewResolver to intercept video network requests
                 val extractedUrls = mutableSetOf<String>()
 
-                // Script to extract data-url attributes from quality buttons after JS executes
+                // Script to extract video URLs from DOM after JS executes
                 val extractionScript = """
                     (function() {
                         var urls = [];
-                        var buttons = document.querySelectorAll('.hd_btn[data-url]');
-                        for (var i = 0; i < buttons.length; i++) {
-                            var btn = buttons[i];
+                        // Quality buttons with data-url
+                        document.querySelectorAll('.hd_btn[data-url]').forEach(function(btn) {
                             var url = btn.getAttribute('data-url');
                             var quality = btn.innerText.trim();
                             if (url) urls.push(quality + '|||' + url);
-                        }
-                        // Also check for videoSrc global variable
+                        });
+                        // Global video source variables
                         if (window.videoSrc) urls.push('Auto|||' + window.videoSrc);
+                        if (window.file) urls.push('Auto|||' + window.file);
+                        // jwplayer sources
+                        try {
+                            var jw = jwplayer();
+                            if (jw && jw.getPlaylist) {
+                                jw.getPlaylist().forEach(function(item) {
+                                    if (item.file) urls.push('Auto|||' + item.file);
+                                    if (item.sources) item.sources.forEach(function(s) {
+                                        if (s.file) urls.push((s.label||'Auto') + '|||' + s.file);
+                                    });
+                                });
+                            }
+                        } catch(e) {}
                         return JSON.stringify(urls);
                     })()
                 """.trimIndent()
 
-                // Create WebViewResolver that intercepts m3u8 URLs AND extracts from DOM
+                // Intercept both HLS (m3u8) and direct (mp4) video URLs
                 val resolver = WebViewResolver(
-                    interceptUrl = Regex("""\.m3u8"""),
+                    interceptUrl = Regex("""\.m3u8|\.mp4"""),
                     additionalUrls = listOf(
-                        Regex("""scdns\.io.*\.m3u8"""),
+                        Regex("""\.m3u8"""),
+                        Regex("""\.mp4"""),
                         Regex("""master\.m3u8"""),
                         Regex("""playlist\.m3u8""")
                     ),
                     userAgent = USER_AGENT,
                     script = extractionScript,
                     scriptCallback = { result ->
-                        // Parse the JSON array of "quality|||url" strings
                         try {
                             val cleaned = result.trim('"').replace("\\\"", "\"")
                             if (cleaned.startsWith("[")) {
-                                val urlList = cleaned.removeSurrounding("[", "]")
+                                cleaned.removeSurrounding("[", "]")
                                     .split("\",\"")
                                     .map { it.trim('"') }
                                     .filter { it.contains("|||") }
-
-                                for (entry in urlList) {
-                                    val parts = entry.split("|||")
-                                    if (parts.size == 2) {
-                                        extractedUrls.add(entry)
+                                    .forEach { entry ->
+                                        val parts = entry.split("|||")
+                                        if (parts.size == 2) extractedUrls.add(entry)
                                     }
-                                }
                             }
-                        } catch (e: Exception) {
-                            // e.printStackTrace()
-                        }
+                        } catch (e: Exception) { }
                     },
                     timeout = 15000L
                 )
@@ -217,64 +224,61 @@ class FaselHDX : MainAPI() {
                     requestCreator("GET", playerUrl, headers = defaultHeaders + mapOf("Referer" to data))
                 )
 
-                // Process intercepted m3u8 URLs from network requests
+                // Collect intercepted video URLs (both m3u8 and mp4) from network requests
                 val allRequests = listOfNotNull(mainRequest) + additionalRequests
                 for (request in allRequests) {
                     val videoUrl = request.url.toString()
-                    if (videoUrl.contains(".m3u8") && extractedUrls.none { it.endsWith(videoUrl) }) {
+                    if ((videoUrl.contains(".m3u8") || videoUrl.contains(".mp4")) &&
+                        extractedUrls.none { it.contains(videoUrl) }) {
                         val qualityText = when {
                             videoUrl.contains("1080") -> "1080p"
                             videoUrl.contains("720") -> "720p"
                             videoUrl.contains("480") -> "480p"
                             videoUrl.contains("360") -> "360p"
-                            videoUrl.contains("master") -> "Auto"
-                            else -> "Unknown"
+                            else -> "Auto"
                         }
                         extractedUrls.add("$qualityText|||$videoUrl")
                     }
                 }
 
-                // Emit all extracted URLs as ExtractorLinks
+                // Emit all found video URLs
                 for (entry in extractedUrls) {
                     val parts = entry.split("|||")
                     if (parts.size == 2) {
                         val qualityText = parts[0]
                         val videoUrl = parts[1]
-
-                        if (videoUrl.contains(".m3u8")) {
-                            callback.invoke(
-                                newExtractorLink(
-                                    this.name,
-                                    "$name - $qualityText",
-                                    videoUrl,
-                                    ExtractorLinkType.M3U8
-                                ) {
-                                    this.referer = playerUrl
-                                    this.quality = getQualityInt(qualityText)
-                                }
-                            )
-                        }
-                    }
-                }
-
-                // Method 2: Fallback - try regex extraction from raw HTML (in case WebView fails)
-                if (extractedUrls.isEmpty()) {
-                    val playerResponse = app.get(playerUrl, referer = data, headers = defaultHeaders).text
-                    val cleanedResponse = playerResponse.replace(Regex("""['"]\s*\+\s*['"]"""), "")
-                    val m3u8Pattern = Regex("""https?://[^\s"']+(?:scdns\.io)[^\s"']*\.m3u8""")
-                    val qualityPattern = Regex("""(\d+p)""")
-
-                    for (match in m3u8Pattern.findAll(cleanedResponse)) {
-                        val videoUrl = match.value
-                        val qualityMatch = qualityPattern.find(videoUrl)
-                        val qualityText = qualityMatch?.value ?: "Auto"
-
+                        val isM3u8 = videoUrl.contains(".m3u8")
                         callback.invoke(
                             newExtractorLink(
                                 this.name,
                                 "$name - $qualityText",
                                 videoUrl,
-                                ExtractorLinkType.M3U8
+                                if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = playerUrl
+                                this.quality = getQualityInt(qualityText)
+                            }
+                        )
+                    }
+                }
+
+                // Fallback: scan raw player HTML for any video URL (any CDN, m3u8 or mp4)
+                if (extractedUrls.isEmpty()) {
+                    val playerResponse = app.get(playerUrl, referer = data, headers = defaultHeaders).text
+                    val cleanedResponse = playerResponse.replace(Regex("""['"]\s*\+\s*['"]"""), "")
+                    val videoPattern = Regex("""https?://[^\s"'\\]+\.(?:m3u8|mp4)(?:[?#][^\s"'\\]*)?""")  
+                    val qualityPattern = Regex("""(\d+p)""")
+
+                    for (match in videoPattern.findAll(cleanedResponse)) {
+                        val videoUrl = match.value
+                        val qualityText = qualityPattern.find(videoUrl)?.value ?: "Auto"
+                        val isM3u8 = videoUrl.contains(".m3u8")
+                        callback.invoke(
+                            newExtractorLink(
+                                this.name,
+                                "$name - $qualityText",
+                                videoUrl,
+                                if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                             ) {
                                 this.referer = playerUrl
                                 this.quality = getQualityInt(qualityText)
