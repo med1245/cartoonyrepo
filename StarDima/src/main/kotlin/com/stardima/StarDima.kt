@@ -37,6 +37,21 @@ class StarDima : MainAPI() {
     private fun isMovie(url: String) = url.contains("/movie/")
     private fun isTvShow(url: String) = url.contains("/tvshow/")
 
+    /** Get og:title or fallback, never the login-modal h1 */
+    private fun pageTitle(doc: Document): String {
+        // og:title is always set to the real content title
+        val og = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
+        if (!og.isNullOrBlank() && !og.contains("تسجيل") && !og.contains("ستارديما | STARDIMA")) return og
+        // Try the browser <title> minus site name suffix
+        val t = doc.title().trim()
+            .substringBefore(" - ستارديما")
+            .substringBefore(" | ستارديما")
+            .substringBefore(" - STARDIMA")
+            .substringBefore(" | STARDIMA")
+            .trim()
+        return t.ifBlank { "StarDima" }
+    }
+
     /**
      * Parse show/movie cards from a page.
      *
@@ -191,19 +206,25 @@ class StarDima : MainAPI() {
     private fun extractEpisodesFromHtml(doc: Document, poster: String?): List<Episode> {
         val episodes = mutableListOf<Episode>()
         val seen = mutableSetOf<String>()
+        var counter = 1
         for (a in doc.select("a[href*=/play/]")) {
             val href = a.attr("abs:href").trim()
             if (href.isBlank() || !seen.add(href)) continue
-            val epNum = Regex("/play/(\\d+)").find(href)?.groupValues?.get(1)?.toIntOrNull()
-                ?: Regex("(\\d+)").find(a.text())?.value?.toIntOrNull()
-            val epText = a.text().trim()
-            val epName = epText.ifBlank { epNum?.let { "الحلقة $it" } }
+            // Never use the DB id (long number) as episode number - use sequential counter
+            val rawText = a.text().trim()
+            // Filter out pure play-button links that have no real title
+            val isMeaningfulText = rawText.isNotBlank()
+                && !rawText.contains("تشغيل")
+                && !rawText.contains("play", ignoreCase = true)
+                && rawText.length > 2
+            val epName = if (isMeaningfulText) rawText else "الحلقة $counter"
             val epPoster = a.selectFirst("img")?.attr("abs:src")?.ifBlank { null }
             episodes.add(newEpisode(href) {
                 name = epName
-                episode = epNum
+                episode = counter
                 posterUrl = epPoster ?: poster
             })
+            counter++
         }
         return episodes
     }
@@ -212,19 +233,17 @@ class StarDima : MainAPI() {
         return try {
             val doc = app.get(url, headers = hdrs()).document
 
-            val h1 = doc.selectFirst("h1")?.text()?.trim()
-            val titleFallback = doc.title().trim()
-                .substringBefore(" - ").substringBefore(" | ").substringBefore(" – ").trim()
-            val title = (h1?.ifBlank { null } ?: titleFallback).ifBlank { "StarDima" }
+            // Always prefer og:title — h1 on stardima.com shows the login modal text
+            val title = pageTitle(doc)
 
-            val plot = doc.selectFirst("meta[name=description], meta[property=og:description]")
+            val plot = doc.selectFirst("meta[property=og:description], meta[name=description]")
                 ?.attr("content")?.trim()
-                ?: doc.selectFirst("p")?.text()?.trim()
 
-            val poster = doc.selectFirst("meta[property=og:image]")?.attr("content")?.ifBlank { null }
-                ?: doc.selectFirst("img[src]")?.attr("abs:src")?.ifBlank { null }
+            val poster = doc.selectFirst("meta[property=og:image]")
+                ?.attr("content")?.ifBlank { null }
 
             if (isMovie(url)) {
+                // For movies, the data is either a direct play URL or the page itself
                 val playLink = doc.select("a[href*=/play/]").firstOrNull()?.attr("abs:href") ?: url
                 return newMovieLoadResponse(title, url, TvType.Movie, playLink) {
                     this.posterUrl = poster
@@ -304,21 +323,44 @@ class StarDima : MainAPI() {
         Log.d("StarDima", "loadLinks: $data")
         var found = false
 
-        // Collect all URLs to try (start with data, may add iframes from the stardima page)
+        // Collect all URLs to try (start with the stardima play page iframes, then the data URL itself)
         val urlsToTry = mutableListOf<String>()
 
         if (data.startsWith(mainUrl)) {
             try {
-                val doc = app.get(data, headers = hdrs()).document
-                // Collect iframes first
+                // Fetch the episode play page — this may have hyperwatching.com iframes
+                val resp = app.get(
+                    data,
+                    headers = hdrs() + mapOf(
+                        "X-Requested-With" to "XMLHttpRequest"
+                    )
+                )
+                val doc = resp.document
+                val html = resp.text
+
+                // Look for iframe embeds
                 for (iframe in doc.select("iframe[src]")) {
                     val src = iframe.attr("abs:src").trim()
                     if (src.isNotBlank() && src.startsWith("http") && src != data) {
                         urlsToTry.add(src)
                     }
                 }
-                // Also try streams directly on this page
-                found = found || tryExtractStreams(doc.html(), data, callback)
+
+                // Try to extract streams directly from the page HTML (regex for m3u8/mp4)
+                found = found || tryExtractStreams(html, data, callback)
+
+                // Try to extract player server links from server-select buttons
+                // e.g. data-url attributes on watch buttons
+                for (el in doc.select("[data-url]")) {
+                    val watchUrl = el.attr("data-url").trim()
+                    if (watchUrl.startsWith("http")) urlsToTry.add(watchUrl)
+                }
+
+                // Look for player-watch-server links
+                for (a in doc.select("a[href*=hyperwatching], a[href*=embed], a[href*=player]")) {
+                    val href = a.attr("abs:href").trim()
+                    if (href.startsWith("http") && href != data) urlsToTry.add(href)
+                }
             } catch (_: Throwable) {}
         } else {
             urlsToTry.add(data)
