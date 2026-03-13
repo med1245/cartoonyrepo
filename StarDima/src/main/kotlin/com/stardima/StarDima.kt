@@ -252,7 +252,7 @@ class StarDima : MainAPI() {
             } else if (isTvShow(url)) {
                 // TV Show: gather episodes
                 val allEpisodes = mutableListOf<Episode>()
-                
+
                 // Try JSON season API
                 val episodesContainer = doc.selectFirst("[data-initial-season-id]")
                 val initialSeasonId = episodesContainer?.attr("data-initial-season-id")?.trim()
@@ -263,7 +263,7 @@ class StarDima : MainAPI() {
                     !initialSeasonId.isNullOrBlank() -> listOf(initialSeasonId)
                     else -> emptyList()
                 }
-                
+
                 for ((idx, sid) in seasonIds.withIndex()) {
                     val eps = fetchSeasonEpisodes(sid, poster)
                     for (ep in eps) {
@@ -275,12 +275,12 @@ class StarDima : MainAPI() {
                         })
                     }
                 }
-                
+
                 // HTML fallback
                 if (allEpisodes.isEmpty()) {
                     allEpisodes.addAll(extractEpisodesFromHtml(doc, poster))
                 }
-                
+
                 // Fetch from first episode page as last resort
                 if (allEpisodes.isEmpty()) {
                     val firstPlay = doc.select("a[href*=/play/]").firstOrNull()?.attr("abs:href")
@@ -298,69 +298,13 @@ class StarDima : MainAPI() {
                         } catch (_: Throwable) {}
                     }
                 }
-                
+
                 if (allEpisodes.isEmpty()) return null
-                
+
                 return newTvSeriesLoadResponse(title, url, TvType.TvSeries, allEpisodes) {
                     this.posterUrl = poster
                     this.plot = plot
                 }
-            }
-
-            // TV Show: gather episodes
-            val allEpisodes = mutableListOf<Episode>()
-
-            // Try JSON season API
-            val episodesContainer = doc.selectFirst("[data-initial-season-id]")
-            val initialSeasonId = episodesContainer?.attr("data-initial-season-id")?.trim()
-            val seasonItems = doc.select("[data-season-id]")
-            val seasonIds = when {
-                seasonItems.isNotEmpty() ->
-                    seasonItems.map { it.attr("data-season-id") }.filter { it.isNotBlank() }.distinct()
-                !initialSeasonId.isNullOrBlank() -> listOf(initialSeasonId)
-                else -> emptyList()
-            }
-
-            for ((idx, sid) in seasonIds.withIndex()) {
-                val eps = fetchSeasonEpisodes(sid, poster)
-                for (ep in eps) {
-                    allEpisodes.add(newEpisode(ep.data) {
-                        name = ep.name
-                        episode = ep.episode
-                        season = idx + 1
-                        posterUrl = ep.posterUrl
-                    })
-                }
-            }
-
-            // HTML fallback
-            if (allEpisodes.isEmpty()) {
-                allEpisodes.addAll(extractEpisodesFromHtml(doc, poster))
-            }
-
-            // Fetch from first episode page as last resort
-            if (allEpisodes.isEmpty()) {
-                val firstPlay = doc.select("a[href*=/play/]").firstOrNull()?.attr("abs:href")
-                if (firstPlay != null) {
-                    try {
-                        val pDoc = app.get(firstPlay, headers = hdrs()).document
-                        val sid = pDoc.selectFirst("[data-initial-season-id]")
-                            ?.attr("data-initial-season-id")?.trim()
-                        if (!sid.isNullOrBlank()) {
-                            allEpisodes.addAll(fetchSeasonEpisodes(sid, poster))
-                        }
-                        if (allEpisodes.isEmpty()) {
-                            allEpisodes.addAll(extractEpisodesFromHtml(pDoc, poster))
-                        }
-                    } catch (_: Throwable) {}
-                }
-            }
-
-            if (allEpisodes.isEmpty()) return null
-
-            newTvSeriesLoadResponse(title, url, TvType.TvSeries, allEpisodes) {
-                this.posterUrl = poster
-                this.plot = plot
             }
         } catch (t: Throwable) {
             Log.e("StarDima", "load($url) failed: ${t.message}")
