@@ -10,6 +10,8 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import kotlin.text.Regex
+import kotlin.text.MatchResult
 
 class StarDima : MainAPI() {
     override var mainUrl = "https://www.stardima.com"
@@ -278,19 +280,46 @@ class StarDima : MainAPI() {
         return episodes
     }
 
+    /**
+     * Extract season ID from HTML when standard attributes are not found
+     */
+    private fun extractSeasonIdFromHtml(doc: Document): String? {
+        // Try to find season ID in various places
+        val seasonIdPatterns = listOf(
+            Regex("""season/(\d+)"""),
+            Regex("""seasonId.*?(\d+)"""),
+            Regex("""['"]season['"]\s*[:=]\s*['"]?(\d+)"""),
+            Regex("""data-season=["']?(\d+)"""),
+            Regex("""season["']?\s*[:=]\s*['"]?(\d+)""")
+        )
+        
+        val pageText = doc.outerHtml()
+        for (pattern in seasonIdPatterns) {
+            val match = pattern.find(pageText)
+            if (match != null) {
+                val sid = match.groupValues[1]
+                if (!sid.isNullOrBlank() && sid.length <= 10) { // reasonable season ID length
+                    return sid
+                }
+            }
+        }
+        
+        return null
+    }
+
     override suspend fun load(url: String): LoadResponse? {
         return try {
             val doc = app.get(url, headers = hdrs()).document
-
+            
             // Always prefer og:title — h1 on stardima.com shows the login modal text
             val title = pageTitle(doc)
-
+            
             val plot = doc.selectFirst("meta[property=og:description], meta[name=description]")
                 ?.attr("content")?.trim()
-
+            
             val poster = doc.selectFirst("meta[property=og:image]")
                 ?.attr("content")?.ifBlank { null }
-
+            
             if (isMovie(url)) {
                 // For movies, the data is either a direct play URL or the page itself
                 val playLink = doc.select("a[href*=/play/]").firstOrNull()?.attr("abs:href") ?: url
@@ -302,18 +331,59 @@ class StarDima : MainAPI() {
                 // TV Show: gather episodes
                 val allEpisodes = mutableListOf<Episode>()
                 
-                // Try JSON season API
-                val episodesContainer = doc.selectFirst("[data-initial-season-id]")
-                val initialSeasonId = episodesContainer?.attr("data-initial-season-id")?.trim()
-                val seasonItems = doc.select("[data-season-id]")
-                val seasonIds = when {
-                    seasonItems.isNotEmpty() ->
-                        seasonItems.map { it.attr("data-season-id") }.filter { it.isNotBlank() }.distinct()
-                    !initialSeasonId.isNullOrBlank() -> listOf(initialSeasonId)
-                    else -> emptyList()
+                // Try JSON season API - enhanced extraction
+                val seasonIds = mutableListOf<String>()
+                
+                // Method 1: data-initial-season-id attribute
+                val initialSeasonId = doc.selectFirst("[data-initial-season-id]")?.attr("data-initial-season-id")?.trim()
+                if (!initialSeasonId.isNullOrBlank()) {
+                    seasonIds.add(initialSeasonId)
                 }
                 
-                for ((idx, sid) in seasonIds.withIndex()) {
+                // Method 2: data-season-id attributes
+                val seasonItems = doc.select("[data-season-id]")
+                seasonItems.forEach { item ->
+                    val sid = item.attr("data-season-id").trim()
+                    if (!sid.isNullOrBlank()) {
+                        seasonIds.add(sid)
+                    }
+                }
+                
+                // Method 3: Extract from URL patterns in JavaScript or data attributes
+                if (seasonIds.isEmpty()) {
+                    // Look for season ID in various attributes and text
+                    val seasonIdPatterns = listOf(
+                        Regex("""season/(\d+)"""),
+                        Regex("""seasonId.*?(\d+)"""),
+                        Regex("""['"]season['"]\s*[:=]\s*['"]?(\d+)"""),
+                        Regex("""data-season=["']?(\d+)""")
+                    )
+                    
+                     val pageText = doc.outerHtml()
+                     for (pattern in seasonIdPatterns) {
+                         val match = pattern.find(pageText)
+                         if (match != null) {
+                             val sid = match.groupValues[1]
+                             if (!sid.isNullOrBlank() && sid.length <= 10) { // reasonable season ID length
+                                 seasonIds.add(sid)
+                                 break
+                             }
+                         }
+                     }
+                }
+                
+                // Method 4: Try to infer from TV show slug if we can't find season ID
+                val showSlugMatch = Regex("""tvshow/([^/]+)""").matchEntire(url)
+                if (seasonIds.isEmpty() && showSlugMatch != null) {
+                    // As a last resort, try common season IDs or fetch from a known endpoint
+                    // This is a fallback - in practice we should find the season ID from the page
+                    seasonIds.add("1") // Default to season 1
+                }
+                
+                // Distinct the season IDs
+                val distinctSeasonIds = seasonIds.distinct()
+                
+                for ((idx, sid) in distinctSeasonIds.withIndex()) {
                     val eps = fetchSeasonEpisodes(sid, poster)
                     for (ep in eps) {
                         allEpisodes.add(newEpisode(ep.data) {
@@ -338,6 +408,8 @@ class StarDima : MainAPI() {
                             val pDoc = app.get(firstPlay, headers = hdrs()).document
                             val sid = pDoc.selectFirst("[data-initial-season-id]")
                                 ?.attr("data-initial-season-id")?.trim()
+                                ?: pDoc.select("[data-season-id]")?.firstOrNull()?.attr("data-season-id")?.trim()
+                                ?: extractSeasonIdFromHtml(pDoc)
                             if (!sid.isNullOrBlank()) {
                                 allEpisodes.addAll(fetchSeasonEpisodes(sid, poster))
                             }
