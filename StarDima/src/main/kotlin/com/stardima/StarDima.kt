@@ -207,18 +207,34 @@ class StarDima : MainAPI() {
         val episodes = mutableListOf<Episode>()
         val seen = mutableSetOf<String>()
         var counter = 1
-        for (a in doc.select("a[href*=/play/]")) {
+        
+        // Try multiple selectors for episode links
+        val episodeLinks = mutableListOf<Element>()
+        episodeLinks.addAll(doc.select("a[href*=/play/]"))
+        episodeLinks.addAll(doc.select("a[href*=/episode/]"))
+        episodeLinks.addAll(doc.select("a:containsOwn(حلقة)")) // Arabic for "Episode"
+        
+        for (a in episodeLinks.distinct()) {
             val href = a.attr("abs:href").trim()
             if (href.isBlank() || !seen.add(href)) continue
+            
+            // Skip if it's a modal or non-episode link
+            if (href.contains("modal") || href.contains("login") || href.contains("signup")) continue
+            
             // Never use the DB id (long number) as episode number - use sequential counter
             val rawText = a.text().trim()
+            
             // Filter out pure play-button links that have no real title
             val isMeaningfulText = rawText.isNotBlank()
                 && !rawText.contains("تشغيل")
                 && !rawText.contains("play", ignoreCase = true)
+                && !rawText.contains("Watch")
                 && rawText.length > 2
+            
             val epName = if (isMeaningfulText) rawText else "الحلقة $counter"
             val epPoster = a.selectFirst("img")?.attr("abs:src")?.ifBlank { null }
+                ?: a.selectFirst("img")?.attr("data-src")?.ifBlank { null }
+            
             episodes.add(newEpisode(href) {
                 name = epName
                 episode = counter
@@ -226,6 +242,39 @@ class StarDima : MainAPI() {
             })
             counter++
         }
+        
+        // If we still haven't found episodes, try looking for any links that might be episodes
+        if (episodes.isEmpty()) {
+            val allLinks = doc.select("a[href]")
+            for (a in allLinks) {
+                val href = a.attr("abs:href").trim()
+                if (href.isBlank() || !seen.add(href)) continue
+                
+                // Look for patterns that might indicate episode links
+                if (href.contains("/play/") || href.contains("/episode/") || 
+                    a.text().contains("حلقة") || a.text().contains("Episode")) {
+                    
+                    val rawText = a.text().trim()
+                    val isMeaningfulText = rawText.isNotBlank()
+                        && !rawText.contains("تشغيل")
+                        && !rawText.contains("play", ignoreCase = true)
+                        && !rawText.contains("Watch")
+                        && rawText.length > 2
+                    
+                    val epName = if (isMeaningfulText) rawText else "الحلقة $counter"
+                    val epPoster = a.selectFirst("img")?.attr("abs:src")?.ifBlank { null }
+                        ?: a.selectFirst("img")?.attr("data-src")?.ifBlank { null }
+                    
+                    episodes.add(newEpisode(href) {
+                        name = epName
+                        episode = counter
+                        posterUrl = epPoster ?: poster
+                    })
+                    counter++
+                }
+            }
+        }
+        
         return episodes
     }
 
@@ -382,56 +431,101 @@ class StarDima : MainAPI() {
                 val html = resp.text
                 val doc = resp.document
 
-                // Try video/source tags
-                for (el in doc.select("video[src], source[src]")) {
-                    val src = el.attr("abs:src").trim()
-                    if (!src.startsWith("http")) continue
-                    if (src.contains(".m3u8")) {
-                        M3u8Helper.generateM3u8(name, src, targetUrl).forEach { callback(it); found = true }
-                    } else if (src.contains(".mp4")) {
-                        callback(ExtractorLink(name, "$name MP4", src, targetUrl, Qualities.Unknown.value, false))
+            // Try video/source tags
+            for (el in doc.select("video[src], source[src]")) {
+                val src = el.attr("abs:src").trim()
+                if (!src.startsWith("http")) continue
+                if (src.contains(".m3u8")) {
+                    M3u8Helper.generateM3u8(name, src, targetUrl).forEach { callback(it); found = true }
+                } else if (src.contains(".mp4")) {
+                    callback(ExtractorLink(name, "$name MP4", src, targetUrl, Qualities.Unknown.value, false))
+                    found = true
+                }
+            }
+
+            // Try HTML grep
+            if (!found) {
+                found = found || tryExtractStreams(html, targetUrl, callback)
+            }
+
+            // Follow nested iframes
+            if (!found) {
+                for (iframe in doc.select("iframe[src]")) {
+                    if (found) break
+                    val iSrc = iframe.attr("abs:src").trim()
+                    if (iSrc.isBlank() || !iSrc.startsWith("http") || iSrc == targetUrl) continue
+
+                    // Try known extractors
+                    if (loadExtractor(iSrc, targetUrl, subtitleCallback, callback)) {
                         found = true
+                        continue
+                    }
+
+                    try {
+                        val iResp = app.get(iSrc, headers = hdrs() + mapOf("Referer" to targetUrl))
+                        val iHtml = iResp.text
+                        val iDoc = iResp.document
+
+                        for (el in iDoc.select("video[src], source[src]")) {
+                            val src = el.attr("abs:src").trim()
+                            if (!src.startsWith("http")) continue
+                            if (src.contains(".m3u8")) {
+                                M3u8Helper.generateM3u8(name, src, iSrc).forEach { callback(it); found = true }
+                            } else if (src.contains(".mp4")) {
+                                callback(ExtractorLink(name, "$name Iframe", src, iSrc, Qualities.Unknown.value, false))
+                                found = true
+                            }
+                        }
+
+                        if (!found) found = found || tryExtractStreams(iHtml, iSrc, callback)
+                    } catch (_: Throwable) {}
+                }
+            }
+            
+            // Additional fallback: try to extract any video URL from the page
+            if (!found) {
+                val videoUrls = mutableListOf<String>()
+                // Look for any URLs that might be video files
+                val urlPatterns = listOf(
+                    Regex("""https?://[^\s"'\\]+\.(?:mp4|m3u8|m3u)(?:\?[^\s"'\\]*)?"""),
+                    Regex("""["'](?:file|url|src|stream|link|source|hls|video)["']\s*:\s*["'](https?://[^"']+\.(?:mp4|m3u8|m3u)[^"']*)["']""", RegexOption.IGNORE_CASE)
+                )
+                
+                for (pattern in urlPatterns) {
+                    for (match in pattern.findAll(html)) {
+                        val url = if (pattern.pattern.startsWith("[")) match.groupValues[1] else match.value
+                        if (url.startsWith("http")) {
+                            videoUrls.add(url)
+                        }
                     }
                 }
-
-                // Try HTML grep
-                if (!found) {
-                    found = found || tryExtractStreams(html, targetUrl, callback)
-                }
-
-                // Follow nested iframes
-                if (!found) {
-                    for (iframe in doc.select("iframe[src]")) {
-                        if (found) break
-                        val iSrc = iframe.attr("abs:src").trim()
-                        if (iSrc.isBlank() || !iSrc.startsWith("http") || iSrc == targetUrl) continue
-
-                        // Try known extractors
-                        if (loadExtractor(iSrc, targetUrl, subtitleCallback, callback)) {
+                
+                // Try each found URL
+                for (videoUrl in videoUrls.distinct()) {
+                    if (found) break
+                    try {
+                        // Try known extractors first
+                        if (loadExtractor(videoUrl, targetUrl, subtitleCallback, callback)) {
                             found = true
                             continue
                         }
-
-                        try {
-                            val iResp = app.get(iSrc, headers = hdrs() + mapOf("Referer" to targetUrl))
-                            val iHtml = iResp.text
-                            val iDoc = iResp.document
-
-                            for (el in iDoc.select("video[src], source[src]")) {
-                                val src = el.attr("abs:src").trim()
-                                if (!src.startsWith("http")) continue
-                                if (src.contains(".m3u8")) {
-                                    M3u8Helper.generateM3u8(name, src, iSrc).forEach { callback(it); found = true }
-                                } else if (src.contains(".mp4")) {
-                                    callback(ExtractorLink(name, "$name Iframe", src, iSrc, Qualities.Unknown.value, false))
-                                    found = true
-                                }
+                        
+                        // Try direct video URL
+                        val resp = app.get(videoUrl, headers = hdrs() + mapOf("Referer" to targetUrl))
+                        if (resp.code == 200) {
+                            val contentType = resp.headers["Content-Type"] ?: ""
+                            if (contentType.contains("video/") || videoUrl.contains(".mp4")) {
+                                callback(ExtractorLink(name, "$name Direct", videoUrl, targetUrl, Qualities.Unknown.value, false))
+                                found = true
+                            } else if (videoUrl.contains(".m3u8") || contentType.contains("mpegurl")) {
+                                M3u8Helper.generateM3u8(name, videoUrl, targetUrl).forEach { callback(it); found = true }
                             }
-
-                            if (!found) found = found || tryExtractStreams(iHtml, iSrc, callback)
-                        } catch (_: Throwable) {}
+                        }
+                    } catch (e: Exception) {
+                        Log.d("StarDima", "Failed to process video URL $videoUrl: ${e.message}")
                     }
                 }
+            }
             } catch (t: Throwable) {
                 Log.e("StarDima", "loadLinks $targetUrl: ${t.message}")
             }
