@@ -252,7 +252,7 @@ class StarDima : MainAPI() {
             } else if (isTvShow(url)) {
                 // TV Show: gather episodes
                 val allEpisodes = mutableListOf<Episode>()
-
+                
                 // Try JSON season API
                 val episodesContainer = doc.selectFirst("[data-initial-season-id]")
                 val initialSeasonId = episodesContainer?.attr("data-initial-season-id")?.trim()
@@ -263,7 +263,7 @@ class StarDima : MainAPI() {
                     !initialSeasonId.isNullOrBlank() -> listOf(initialSeasonId)
                     else -> emptyList()
                 }
-
+                
                 for ((idx, sid) in seasonIds.withIndex()) {
                     val eps = fetchSeasonEpisodes(sid, poster)
                     for (ep in eps) {
@@ -275,12 +275,12 @@ class StarDima : MainAPI() {
                         })
                     }
                 }
-
+                
                 // HTML fallback
                 if (allEpisodes.isEmpty()) {
                     allEpisodes.addAll(extractEpisodesFromHtml(doc, poster))
                 }
-
+                
                 // Fetch from first episode page as last resort
                 if (allEpisodes.isEmpty()) {
                     val firstPlay = doc.select("a[href*=/play/]").firstOrNull()?.attr("abs:href")
@@ -298,13 +298,16 @@ class StarDima : MainAPI() {
                         } catch (_: Throwable) {}
                     }
                 }
-
+                
                 if (allEpisodes.isEmpty()) return null
-
+                
                 return newTvSeriesLoadResponse(title, url, TvType.TvSeries, allEpisodes) {
                     this.posterUrl = poster
                     this.plot = plot
                 }
+            } else {
+                // Unsupported URL type
+                return null
             }
         } catch (t: Throwable) {
             Log.e("StarDima", "load($url) failed: ${t.message}")
