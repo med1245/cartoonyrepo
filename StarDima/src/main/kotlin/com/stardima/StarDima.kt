@@ -123,8 +123,8 @@ class StarDima : MainAPI() {
 
             val cleanTitle = title?.replace(Regex("\\s+"), " ")?.trim()
             if (cleanTitle.isNullOrBlank()) continue
-
-            val type = if (isMovie(href)) TvType.Movie else TvType.Anime
+            
+            val type = if (isMovie(href)) TvType.Movie else if (isTvShow(href)) TvType.TvSeries else TvType.Anime
             results.add(newAnimeSearchResponse(cleanTitle, href, type) {
                 posterUrl = poster
             })
@@ -246,6 +246,62 @@ class StarDima : MainAPI() {
                 // For movies, the data is either a direct play URL or the page itself
                 val playLink = doc.select("a[href*=/play/]").firstOrNull()?.attr("abs:href") ?: url
                 return newMovieLoadResponse(title, url, TvType.Movie, playLink) {
+                    this.posterUrl = poster
+                    this.plot = plot
+                }
+            } else if (isTvShow(url)) {
+                // TV Show: gather episodes
+                val allEpisodes = mutableListOf<Episode>()
+                
+                // Try JSON season API
+                val episodesContainer = doc.selectFirst("[data-initial-season-id]")
+                val initialSeasonId = episodesContainer?.attr("data-initial-season-id")?.trim()
+                val seasonItems = doc.select("[data-season-id]")
+                val seasonIds = when {
+                    seasonItems.isNotEmpty() ->
+                        seasonItems.map { it.attr("data-season-id") }.filter { it.isNotBlank() }.distinct()
+                    !initialSeasonId.isNullOrBlank() -> listOf(initialSeasonId)
+                    else -> emptyList()
+                }
+                
+                for ((idx, sid) in seasonIds.withIndex()) {
+                    val eps = fetchSeasonEpisodes(sid, poster)
+                    for (ep in eps) {
+                        allEpisodes.add(newEpisode(ep.data) {
+                            name = ep.name
+                            episode = ep.episode
+                            season = idx + 1
+                            posterUrl = ep.posterUrl
+                        })
+                    }
+                }
+                
+                // HTML fallback
+                if (allEpisodes.isEmpty()) {
+                    allEpisodes.addAll(extractEpisodesFromHtml(doc, poster))
+                }
+                
+                // Fetch from first episode page as last resort
+                if (allEpisodes.isEmpty()) {
+                    val firstPlay = doc.select("a[href*=/play/]").firstOrNull()?.attr("abs:href")
+                    if (firstPlay != null) {
+                        try {
+                            val pDoc = app.get(firstPlay, headers = hdrs()).document
+                            val sid = pDoc.selectFirst("[data-initial-season-id]")
+                                ?.attr("data-initial-season-id")?.trim()
+                            if (!sid.isNullOrBlank()) {
+                                allEpisodes.addAll(fetchSeasonEpisodes(sid, poster))
+                            }
+                            if (allEpisodes.isEmpty()) {
+                                allEpisodes.addAll(extractEpisodesFromHtml(pDoc, poster))
+                            }
+                        } catch (_: Throwable) {}
+                    }
+                }
+                
+                if (allEpisodes.isEmpty()) return null
+                
+                return newTvSeriesLoadResponse(title, url, TvType.TvSeries, allEpisodes) {
                     this.posterUrl = poster
                     this.plot = plot
                 }
