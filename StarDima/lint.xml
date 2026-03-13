@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Kotlin's forEach on Jsoup Elements is falsely flagged as Java ArrayList.forEach (API 24).
+         This is a known false positive — Kotlin stdlib forEach works on all API levels. -->
+    <issue id="NewApi" severity="ignore" />
+</lint>
