@@ -2,28 +2,14 @@
 
 package com.stardima
 
-import android.annotation.SuppressLint
 import android.util.Log
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.mainPageOf
-import com.lagradost.cloudstream3.newAnimeSearchResponse
-import com.lagradost.cloudstream3.newEpisode
-import com.lagradost.cloudstream3.newHomePageResponse
-import com.lagradost.cloudstream3.newMovieLoadResponse
-import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Document
-import org.json.JSONObject
-import org.json.JSONArray
-
-/** Intermediate episode data extracted from the StarDima API before building CloudStream Episode objects. */
-private data class RawEpisode(
-    val data: String,
-    val name: String?,
-    val number: Int,
-    val posterUrl: String?
-)
+import org.jsoup.nodes.Element
 
 class StarDima : MainAPI() {
     override var mainUrl = "https://www.stardima.com"
@@ -32,103 +18,122 @@ class StarDima : MainAPI() {
     override var lang = "ar"
     override val supportedTypes = setOf(TvType.Anime, TvType.TvSeries, TvType.Movie)
 
-    private fun buildHeaders(): Map<String, String> = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
+    private val ua = "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36"
+
+    private fun hdrs() = mapOf(
+        "User-Agent" to ua,
         "Accept-Language" to "ar,en-US;q=0.9,en;q=0.8",
         "Referer" to "$mainUrl/",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     )
 
-    private fun buildApiHeaders(): Map<String, String> = buildHeaders() + mapOf(
-        "X-Requested-With" to "XMLHttpRequest",
-        "Accept" to "application/json, text/javascript, */*; q=0.01"
-    )
-
-    // ─── Main page sections ───────────────────────────────────────────────────
     override val mainPage = mainPageOf(
-        ""              to "الرئيسية",          // Homepage (trending/featured)
-        "newrelases"    to "المضاف حديثاً",      // New Releases
-        "mosalsalat"    to "مسلسلات",            // Series
-        "aflam"         to "أفلام"              // Movies
+        ""           to "الرئيسية",
+        "newrelases" to "المضاف حديثاً",
+        "mosalsalat" to "مسلسلات",
+        "aflam"      to "أفلام"
     )
-
-    // ─── Helpers ──────────────────────────────────────────────────────────────
 
     private fun isMovie(url: String) = url.contains("/movie/")
     private fun isTvShow(url: String) = url.contains("/tvshow/")
 
     /**
-     * Determine TvType from URL.
-     * Shows: /tvshow/...  → TvSeries (treated as Anime since it's cartoon/anime site)
-     * Movies: /movie/...  → Movie
+     * Parse show/movie cards from a page.
+     *
+     * The site renders cards where the title is in h2/h3 and the watch link
+     * says "شاهد الآن". Strategy: find all tvshow/movie links, then walk UP
+     * the DOM to find the nearest h2/h3 title and img poster.
      */
-    private fun typeFrom(url: String): TvType =
-        if (isMovie(url)) TvType.Movie else TvType.Anime
-
-    /**
-     * Extract all show/movie cards from a document.
-     * Cards are <a href="/tvshow/..."> or <a href="/movie/..."> links.
-     */
-    private fun parseCards(doc: Document, baseUrl: String = mainUrl): List<SearchResponse> {
+    private fun parseCards(doc: Document): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
 
-        doc.select("a[href]").forEach { a ->
+        for (a in doc.select("a[href]")) {
             val href = a.attr("abs:href").trim()
-            if (href.isBlank()) return@forEach
-            // Only show/movie links from this domain
-            if (!href.startsWith(mainUrl)) return@forEach
-            if (!isTvShow(href) && !isMovie(href)) return@forEach
-            // Skip episode play links like /tvshow/.../play/...
-            if (href.contains("/play/")) return@forEach
-            if (!seen.add(href)) return@forEach
+            if (href.isBlank() || !href.startsWith(mainUrl)) continue
+            if (!isTvShow(href) && !isMovie(href)) continue
+            if (href.contains("/play/")) continue
+            if (!seen.add(href)) continue
 
-            // Title: from title attr, img alt, or link text (strip UI decoration)
-            val img = a.selectFirst("img")
-            val rawTitle = (a.attr("title").ifBlank { null }
-                ?: img?.attr("alt")?.ifBlank { null }
-                ?: a.text()).trim()
-            // Clean up — remove newlines and excessive whitespace
-            val title = rawTitle.replace(Regex("\\s+"), " ").trim().ifBlank { return@forEach }
+            var title: String? = a.attr("title").trim().ifBlank { null }
+            var poster: String? = null
 
-            // Poster: from <img> inside the anchor
-            val poster = img?.attr("abs:src")?.ifBlank { null }
-                ?: img?.attr("data-src")?.ifBlank { null }
-
-            results.add(
-                newAnimeSearchResponse(title, href, typeFrom(href)) {
-                    posterUrl = poster
+            // Check img inside anchor
+            if (title == null) {
+                val imgInside = a.selectFirst("img")
+                if (imgInside != null) {
+                    title = imgInside.attr("alt").trim().ifBlank { null }
+                    poster = imgInside.attr("abs:src").ifBlank { null }
+                        ?: imgInside.attr("data-src").ifBlank { null }
                 }
-            )
+            }
+
+            // Walk up DOM looking for h2/h3 heading
+            if (title == null) {
+                var el: Element? = a.parent()
+                var depth = 0
+                while (el != null && depth < 6) {
+                    val heading = el.selectFirst("h2, h3")
+                    if (heading != null && heading.text().isNotBlank()) {
+                        title = heading.text().trim()
+                    }
+                    if (poster == null) {
+                        val img = el.selectFirst("img[src]")
+                        if (img != null) poster = img.attr("abs:src").ifBlank { null }
+                    }
+                    if (title != null) break
+                    el = el.parent()
+                    depth++
+                }
+            }
+
+            // Look at previous siblings for h2/h3
+            if (title == null) {
+                var sibling = a.previousElementSibling()
+                while (sibling != null) {
+                    val tag = sibling.tagName()
+                    if ((tag == "h2" || tag == "h3") && sibling.text().isNotBlank()) {
+                        title = sibling.text().trim()
+                        break
+                    }
+                    sibling = sibling.previousElementSibling()
+                }
+            }
+
+            // Fallback to link text only if it doesn't contain "شاهد"
+            if (title == null) {
+                val txt = a.text().trim()
+                if (txt.isNotBlank() && !txt.contains("شاهد")) title = txt
+            }
+
+            val cleanTitle = title?.replace(Regex("\\s+"), " ")?.trim()
+            if (cleanTitle.isNullOrBlank()) continue
+
+            val type = if (isMovie(href)) TvType.Movie else TvType.Anime
+            results.add(newAnimeSearchResponse(cleanTitle, href, type) {
+                posterUrl = poster
+            })
         }
         return results
     }
 
-    // ─── getMainPage ──────────────────────────────────────────────────────────
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val key = request.data  // "", "newrelases", "mosalsalat", "aflam"
-
+        val key = request.data
         val url = when {
-            key.isBlank() -> mainUrl  // homepage
-            page == 1 -> "$mainUrl/$key"
-            else -> "$mainUrl/$key?page=$page"
+            key.isBlank() -> mainUrl
+            page == 1    -> "$mainUrl/$key"
+            else         -> "$mainUrl/$key?page=$page"
         }
-
         val doc = try {
-            app.get(url, headers = buildHeaders()).document
+            app.get(url, headers = hdrs()).document
         } catch (t: Throwable) {
-            Log.e("StarDima", "getMainPage($url) failed: ${t.message}")
+            Log.e("StarDima", "getMainPage failed: ${t.message}")
             return newHomePageResponse(request.name, emptyList())
         }
-
         val items = parseCards(doc)
-        // Homepage doesn't paginate; other pages do
         val hasMore = key.isNotBlank() && items.isNotEmpty() && page < 50
         return newHomePageResponse(request.name, items, hasNext = hasMore)
     }
-
-    // ─── search ───────────────────────────────────────────────────────────────
 
     override suspend fun search(query: String): List<SearchResponse> {
         val q = query.trim().ifBlank { return emptyList() }
@@ -136,49 +141,45 @@ class StarDima : MainAPI() {
             val doc = app.get(
                 "$mainUrl/search",
                 params = mapOf("q" to q),
-                headers = buildHeaders()
+                headers = hdrs()
             ).document
             parseCards(doc)
         } catch (t: Throwable) {
-            Log.e("StarDima", "search($q) failed: ${t.message}")
+            Log.e("StarDima", "search failed: ${t.message}")
             emptyList()
         }
     }
 
     // ─── load ─────────────────────────────────────────────────────────────────
 
-    /**
-     * Fetch episodes for a season from the JSON API.
-     * Returns a list of RawEpisode objects with watch_url as data.
-     */
-    private suspend fun fetchSeasonEpisodes(seasonId: String, showPoster: String?): List<RawEpisode> {
+    private suspend fun fetchSeasonEpisodes(seasonId: String, showPoster: String?): List<Episode> {
         return try {
-            val apiUrl = "$mainUrl/series/season/$seasonId"
-            val response = app.get(
-                apiUrl,
-                headers = buildApiHeaders()
+            val text = app.get(
+                "$mainUrl/series/season/$seasonId",
+                headers = hdrs() + mapOf(
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Accept" to "application/json, */*; q=0.01"
+                )
             ).text
 
-            val json = JSONObject(response)
-            val episodesArr: JSONArray = json.optJSONArray("episodes") ?: return emptyList()
+            if (!text.trimStart().startsWith("{") && !text.trimStart().startsWith("[")) {
+                return emptyList()
+            }
 
-            val episodes = mutableListOf<RawEpisode>()
-            for (i in 0 until episodesArr.length()) {
-                val ep = episodesArr.getJSONObject(i)
-                val epId = ep.optInt("id", -1)
-                if (epId < 0) continue
-                val epNum = ep.optInt("episode_number", i + 1)
-                val epTitle = ep.optString("title", "الحلقة $epNum")
+            val json = org.json.JSONObject(text)
+            val arr = json.optJSONArray("episodes") ?: return emptyList()
+            val episodes = mutableListOf<Episode>()
+            for (i in 0 until arr.length()) {
+                val ep = arr.getJSONObject(i)
+                val num = ep.optInt("episode_number", i + 1)
+                val epTitle = ep.optString("title", "الحلقة $num")
                 val watchUrl = ep.optString("watch_url", "")
-
                 if (watchUrl.isBlank()) continue
-
-                episodes.add(RawEpisode(
-                    data = watchUrl,
-                    name = epTitle.ifBlank { null },
-                    number = epNum,
+                episodes.add(newEpisode(watchUrl) {
+                    name = epTitle.ifBlank { null }
+                    episode = num
                     posterUrl = showPoster
-                ))
+                })
             }
             episodes
         } catch (t: Throwable) {
@@ -187,92 +188,104 @@ class StarDima : MainAPI() {
         }
     }
 
+    private fun extractEpisodesFromHtml(doc: Document, poster: String?): List<Episode> {
+        val episodes = mutableListOf<Episode>()
+        val seen = mutableSetOf<String>()
+        for (a in doc.select("a[href*=/play/]")) {
+            val href = a.attr("abs:href").trim()
+            if (href.isBlank() || !seen.add(href)) continue
+            val epNum = Regex("/play/(\\d+)").find(href)?.groupValues?.get(1)?.toIntOrNull()
+                ?: Regex("(\\d+)").find(a.text())?.value?.toIntOrNull()
+            val epText = a.text().trim()
+            val epName = epText.ifBlank { epNum?.let { "الحلقة $it" } }
+            val epPoster = a.selectFirst("img")?.attr("abs:src")?.ifBlank { null }
+            episodes.add(newEpisode(href) {
+                name = epName
+                episode = epNum
+                posterUrl = epPoster ?: poster
+            })
+        }
+        return episodes
+    }
+
     override suspend fun load(url: String): LoadResponse? {
         return try {
-            val doc = app.get(url, headers = buildHeaders()).document
+            val doc = app.get(url, headers = hdrs()).document
 
-            // Title: prefer <h1>, fallback to <title> (strip site name suffix)
             val h1 = doc.selectFirst("h1")?.text()?.trim()
-            val titleFallback = doc.title()
-                .trim()
-                .substringBefore(" - ")
-                .substringBefore(" | ")
-                .trim()
+            val titleFallback = doc.title().trim()
+                .substringBefore(" - ").substringBefore(" | ").substringBefore(" – ").trim()
             val title = (h1?.ifBlank { null } ?: titleFallback).ifBlank { "StarDima" }
 
-            // Plot: meta description
-            val metaDesc = doc.selectFirst("meta[name=description], meta[property=og:description]")
+            val plot = doc.selectFirst("meta[name=description], meta[property=og:description]")
                 ?.attr("content")?.trim()
-            val bodyPlot = doc.selectFirst("p")?.text()?.trim()
-            val plot = (metaDesc?.ifBlank { null } ?: bodyPlot?.ifBlank { null })
+                ?: doc.selectFirst("p")?.text()?.trim()
 
-            // Poster: from og:image meta or first large <img>
             val poster = doc.selectFirst("meta[property=og:image]")?.attr("content")?.ifBlank { null }
                 ?: doc.selectFirst("img[src]")?.attr("abs:src")?.ifBlank { null }
 
             if (isMovie(url)) {
-                // Movie: find the single play link or use a direct href
-                val playLink = doc.select("a[href*=/play/]").firstOrNull()?.attr("abs:href")
-                    ?: url
-                newMovieLoadResponse(title, url, TvType.Movie, playLink) {
+                val playLink = doc.select("a[href*=/play/]").firstOrNull()?.attr("abs:href") ?: url
+                return newMovieLoadResponse(title, url, TvType.Movie, playLink) {
                     this.posterUrl = poster
                     this.plot = plot
                 }
-            } else {
-                // TV Show: use the season API to get all episodes
-                // 1. Find the episodes list container with data-initial-season-id
-                val episodesContainer = doc.selectFirst("#episodes-list-container")
-                val initialSeasonId = episodesContainer?.attr("data-initial-season-id")?.trim()
+            }
 
-                // 2. Find all season items with data-season-id to handle multi-season shows
-                val seasonItems = doc.select("[data-season-id]")
-                val allSeasonIds = if (seasonItems.isNotEmpty()) {
+            // TV Show: gather episodes
+            val allEpisodes = mutableListOf<Episode>()
+
+            // Try JSON season API
+            val episodesContainer = doc.selectFirst("[data-initial-season-id]")
+            val initialSeasonId = episodesContainer?.attr("data-initial-season-id")?.trim()
+            val seasonItems = doc.select("[data-season-id]")
+            val seasonIds = when {
+                seasonItems.isNotEmpty() ->
                     seasonItems.map { it.attr("data-season-id") }.filter { it.isNotBlank() }.distinct()
-                } else if (!initialSeasonId.isNullOrBlank()) {
-                    listOf(initialSeasonId)
-                } else {
-                    // Fallback: look for first play link and use its URL to find episode list
-                    val firstPlayHref = doc.select("a[href*=/play/]").firstOrNull()?.attr("abs:href")
-                    if (firstPlayHref != null) {
-                        // Try to get the season ID from the player page
-                        try {
-                            val playerDoc = app.get(firstPlayHref, headers = buildHeaders()).document
-                            val cont = playerDoc.selectFirst("#episodes-list-container")
-                            val sid = cont?.attr("data-initial-season-id")?.trim()
-                            if (!sid.isNullOrBlank()) listOf(sid) else emptyList()
-                        } catch (_: Throwable) { emptyList() }
-                    } else emptyList()
-                }
+                !initialSeasonId.isNullOrBlank() -> listOf(initialSeasonId)
+                else -> emptyList()
+            }
 
-                if (allSeasonIds.isEmpty()) {
-                    Log.w("StarDima", "No season IDs found for $url")
-                    return null
+            for ((idx, sid) in seasonIds.withIndex()) {
+                val eps = fetchSeasonEpisodes(sid, poster)
+                for (ep in eps) {
+                    allEpisodes.add(newEpisode(ep.data) {
+                        name = ep.name
+                        episode = ep.episode
+                        season = idx + 1
+                        posterUrl = ep.posterUrl
+                    })
                 }
+            }
 
-                // 3. Fetch episodes for each season
-                val allEpisodes = mutableListOf<Episode>()
-                for ((seasonIndex, seasonId) in allSeasonIds.withIndex()) {
-                    val rawEps = fetchSeasonEpisodes(seasonId, poster)
-                    // Tag each episode with the season number
-                    rawEps.forEach { ep ->
-                        allEpisodes.add(newEpisode(ep.data) {
-                            this.name = ep.name
-                            this.episode = ep.number
-                            this.season = seasonIndex + 1
-                            this.posterUrl = ep.posterUrl
-                        })
-                    }
-                }
+            // HTML fallback
+            if (allEpisodes.isEmpty()) {
+                allEpisodes.addAll(extractEpisodesFromHtml(doc, poster))
+            }
 
-                if (allEpisodes.isEmpty()) {
-                    Log.w("StarDima", "No episodes found for $url")
-                    return null
+            // Fetch from first episode page as last resort
+            if (allEpisodes.isEmpty()) {
+                val firstPlay = doc.select("a[href*=/play/]").firstOrNull()?.attr("abs:href")
+                if (firstPlay != null) {
+                    try {
+                        val pDoc = app.get(firstPlay, headers = hdrs()).document
+                        val sid = pDoc.selectFirst("[data-initial-season-id]")
+                            ?.attr("data-initial-season-id")?.trim()
+                        if (!sid.isNullOrBlank()) {
+                            allEpisodes.addAll(fetchSeasonEpisodes(sid, poster))
+                        }
+                        if (allEpisodes.isEmpty()) {
+                            allEpisodes.addAll(extractEpisodesFromHtml(pDoc, poster))
+                        }
+                    } catch (_: Throwable) {}
                 }
+            }
 
-                newTvSeriesLoadResponse(title, url, TvType.TvSeries, allEpisodes) {
-                    this.posterUrl = poster
-                    this.plot = plot
-                }
+            if (allEpisodes.isEmpty()) return null
+
+            newTvSeriesLoadResponse(title, url, TvType.TvSeries, allEpisodes) {
+                this.posterUrl = poster
+                this.plot = plot
             }
         } catch (t: Throwable) {
             Log.e("StarDima", "load($url) failed: ${t.message}")
@@ -282,11 +295,6 @@ class StarDima : MainAPI() {
 
     // ─── loadLinks ────────────────────────────────────────────────────────────
 
-    /**
-     * The episode data is a hyperwatching.com iframe URL like:
-     *   https://hyperwatching.com/iframe/JgiZyLNAmI5I
-     * We need to fetch that iframe page and extract the stream URL.
-     */
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -296,159 +304,133 @@ class StarDima : MainAPI() {
         Log.d("StarDima", "loadLinks: $data")
         var found = false
 
-        // data could be a hyperwatching.com/iframe/ URL or a stardima player page URL
-        val urlsToTry = mutableListOf(data)
+        // Collect all URLs to try (start with data, may add iframes from the stardima page)
+        val urlsToTry = mutableListOf<String>()
 
-        // If it's a stardima.com URL (movie play page), also try fetching it to find the iframe
         if (data.startsWith(mainUrl)) {
             try {
-                val doc = app.get(data, headers = buildHeaders()).document
-                val iframe = doc.selectFirst("iframe[src]")?.attr("abs:src")
-                if (!iframe.isNullOrBlank() && iframe.startsWith("http")) {
-                    urlsToTry.add(0, iframe)
+                val doc = app.get(data, headers = hdrs()).document
+                // Collect iframes first
+                for (iframe in doc.select("iframe[src]")) {
+                    val src = iframe.attr("abs:src").trim()
+                    if (src.isNotBlank() && src.startsWith("http") && src != data) {
+                        urlsToTry.add(src)
+                    }
                 }
+                // Also try streams directly on this page
+                found = found || tryExtractStreams(doc.html(), data, callback)
             } catch (_: Throwable) {}
+        } else {
+            urlsToTry.add(data)
         }
 
         for (targetUrl in urlsToTry) {
+            if (found) break
             try {
-                val resp = app.get(
-                    targetUrl,
-                    headers = buildHeaders() + mapOf("Referer" to mainUrl)
-                )
+                // First try CloudStream's known extractors
+                if (loadExtractor(targetUrl, mainUrl, subtitleCallback, callback)) {
+                    found = true
+                    continue
+                }
+
+                val resp = app.get(targetUrl, headers = hdrs() + mapOf("Referer" to mainUrl))
                 val html = resp.text
                 val doc = resp.document
 
-                // Strategy 1: <video src> or <source src>
-                doc.select("video[src], source[src]").forEach { el ->
+                // Try video/source tags
+                for (el in doc.select("video[src], source[src]")) {
                     val src = el.attr("abs:src").trim()
-                    if (src.startsWith("http") && (src.contains(".mp4") || src.contains(".m3u8"))) {
-                        val isM3u8 = src.contains(".m3u8")
-                        Log.d("StarDima", "video/source tag: $src")
-                        callback(ExtractorLink(
-                            source = name,
-                            name = "$name ${if (isM3u8) "HLS" else "MP4"}",
-                            url = src,
-                            referer = targetUrl,
-                            quality = Qualities.Unknown.value,
-                            isM3u8 = isM3u8
-                        ))
+                    if (!src.startsWith("http")) continue
+                    if (src.contains(".m3u8")) {
+                        M3u8Helper.generateM3u8(name, src, targetUrl).forEach { callback(it); found = true }
+                    } else if (src.contains(".mp4")) {
+                        callback(ExtractorLink(name, "$name MP4", src, targetUrl, Qualities.Unknown.value, false))
                         found = true
                     }
                 }
 
-                // Strategy 2: Regex scan for m3u8/mp4 in page HTML
+                // Try HTML grep
                 if (!found) {
-                    val streamRegex = Regex("""https://[^\s"'\\]+\.(?:mp4|m3u8)(?:\?[^\s"'\\]*)?""")
-                    streamRegex.findAll(html).forEach { m ->
-                        val src = m.value
-                        val isM3u8 = src.contains(".m3u8")
-                        Log.d("StarDima", "regex stream: $src")
-                        callback(ExtractorLink(
-                            source = name,
-                            name = "$name ${if (isM3u8) "HLS" else "Stream"}",
-                            url = src,
-                            referer = targetUrl,
-                            quality = Qualities.Unknown.value,
-                            isM3u8 = isM3u8
-                        ))
-                        found = true
-                    }
+                    found = found || tryExtractStreams(html, targetUrl, callback)
                 }
 
-                // Strategy 3: script tag JSON with file/url/src/stream etc.
+                // Follow nested iframes
                 if (!found) {
-                    val scriptRegex = Regex("""["'](?:file|url|src|stream|link|source|hls|video)["']\s*:\s*["'](https://[^"']+\.(?:mp4|m3u8)[^"']*)["']""", RegexOption.IGNORE_CASE)
-                    scriptRegex.findAll(html).forEach { m ->
-                        val src = m.groupValues[1]
-                        val isM3u8 = src.contains(".m3u8")
-                        Log.d("StarDima", "script JSON stream: $src")
-                        callback(ExtractorLink(
-                            source = name,
-                            name = "$name Script",
-                            url = src,
-                            referer = targetUrl,
-                            quality = Qualities.Unknown.value,
-                            isM3u8 = isM3u8
-                        ))
-                        found = true
-                    }
-                }
+                    for (iframe in doc.select("iframe[src]")) {
+                        if (found) break
+                        val iSrc = iframe.attr("abs:src").trim()
+                        if (iSrc.isBlank() || !iSrc.startsWith("http") || iSrc == targetUrl) continue
 
-                // Strategy 4: Follow nested iframe
-                if (!found) {
-                    doc.select("iframe[src]").forEach { iframe ->
-                        val iframeSrc = iframe.attr("abs:src").trim()
-                        if (iframeSrc.isBlank() || !iframeSrc.startsWith("http")) return@forEach
-                        if (iframeSrc == targetUrl) return@forEach  // avoid loop
-                        Log.d("StarDima", "iframe: $iframeSrc")
+                        // Try known extractors
+                        if (loadExtractor(iSrc, targetUrl, subtitleCallback, callback)) {
+                            found = true
+                            continue
+                        }
+
                         try {
-                            val iDoc = app.get(
-                                iframeSrc,
-                                headers = buildHeaders() + mapOf("Referer" to targetUrl)
-                            )
-                            val iHtml = iDoc.text
+                            val iResp = app.get(iSrc, headers = hdrs() + mapOf("Referer" to targetUrl))
+                            val iHtml = iResp.text
+                            val iDoc = iResp.document
 
-                            iDoc.document.select("video[src], source[src]").forEach { el ->
+                            for (el in iDoc.select("video[src], source[src]")) {
                                 val src = el.attr("abs:src").trim()
-                                if (src.startsWith("http") && (src.contains(".mp4") || src.contains(".m3u8"))) {
-                                    val isM3u8 = src.contains(".m3u8")
-                                    callback(ExtractorLink(
-                                        source = name,
-                                        name = "$name Iframe",
-                                        url = src,
-                                        referer = iframeSrc,
-                                        quality = Qualities.Unknown.value,
-                                        isM3u8 = isM3u8
-                                    ))
+                                if (!src.startsWith("http")) continue
+                                if (src.contains(".m3u8")) {
+                                    M3u8Helper.generateM3u8(name, src, iSrc).forEach { callback(it); found = true }
+                                } else if (src.contains(".mp4")) {
+                                    callback(ExtractorLink(name, "$name Iframe", src, iSrc, Qualities.Unknown.value, false))
                                     found = true
                                 }
                             }
 
-                            if (!found) {
-                                val streamRegex2 = Regex("""https://[^\s"'\\]+\.(?:mp4|m3u8)(?:\?[^\s"'\\]*)?""")
-                                streamRegex2.findAll(iHtml).forEach { m ->
-                                    val src = m.value
-                                    val isM3u8 = src.contains(".m3u8")
-                                    callback(ExtractorLink(
-                                        source = name,
-                                        name = "$name Iframe Stream",
-                                        url = src,
-                                        referer = iframeSrc,
-                                        quality = Qualities.Unknown.value,
-                                        isM3u8 = isM3u8
-                                    ))
-                                    found = true
-                                }
-                            }
-
-                            if (!found) {
-                                val scriptRegex2 = Regex("""["'](?:file|url|src|stream|link|source|hls|video)["']\s*:\s*["'](https://[^"']+\.(?:mp4|m3u8)[^"']*)["']""", RegexOption.IGNORE_CASE)
-                                scriptRegex2.findAll(iHtml).forEach { m ->
-                                    val src = m.groupValues[1]
-                                    val isM3u8 = src.contains(".m3u8")
-                                    callback(ExtractorLink(
-                                        source = name,
-                                        name = "$name Iframe Script",
-                                        url = src,
-                                        referer = iframeSrc,
-                                        quality = Qualities.Unknown.value,
-                                        isM3u8 = isM3u8
-                                    ))
-                                    found = true
-                                }
-                            }
+                            if (!found) found = found || tryExtractStreams(iHtml, iSrc, callback)
                         } catch (_: Throwable) {}
                     }
                 }
-
-                if (found) break
             } catch (t: Throwable) {
-                Log.e("StarDima", "loadLinks trying $targetUrl failed: ${t.message}")
+                Log.e("StarDima", "loadLinks $targetUrl: ${t.message}")
             }
         }
 
-        if (!found) Log.w("StarDima", "No link found for: $data")
+        if (!found) Log.w("StarDima", "No stream: $data")
+        return found
+    }
+
+    /**
+     * Extract m3u8/mp4 URLs from raw HTML using regex patterns.
+     * Returns true if any link was found and dispatched to callback.
+     */
+    private fun tryExtractStreams(html: String, referer: String, callback: (ExtractorLink) -> Unit): Boolean {
+        var found = false
+
+        // Pattern 1: bare m3u8/mp4 URLs
+        val urlRegex = Regex("""https?://[^\s"'\\]+\.(?:mp4|m3u8)(?:\?[^\s"'\\]*)?""")
+        for (m in urlRegex.findAll(html)) {
+            val src = m.value
+            val isM3u8 = src.contains(".m3u8")
+            if (isM3u8) {
+                // Note: can't call suspend M3u8Helper here, just pass the URL directly
+                callback(ExtractorLink(name, "$name HLS", src, referer, Qualities.Unknown.value, true))
+            } else {
+                callback(ExtractorLink(name, "$name MP4", src, referer, Qualities.Unknown.value, false))
+            }
+            found = true
+        }
+
+        // Pattern 2: JSON key-value with stream URLs
+        if (!found) {
+            val jsonRegex = Regex(
+                """["'](?:file|url|src|stream|link|source|hls|video)["']\s*:\s*["'](https?://[^"']+\.(?:mp4|m3u8)[^"']*)["']""",
+                RegexOption.IGNORE_CASE
+            )
+            for (m in jsonRegex.findAll(html)) {
+                val src = m.groupValues[1]
+                val isM3u8 = src.contains(".m3u8")
+                callback(ExtractorLink(name, "$name Stream", src, referer, Qualities.Unknown.value, isM3u8))
+                found = true
+            }
+        }
+
         return found
     }
 }
