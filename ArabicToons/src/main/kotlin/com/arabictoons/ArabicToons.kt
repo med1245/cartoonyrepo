@@ -35,8 +35,9 @@ class ArabicToons : MainAPI() {
     override val mainPage = mainPageOf(
         "index"          to "الحلقات الجديدة",      // New Episodes – from homepage
         "index_series"   to "مسلسلات جديدة",         // New Series – from homepage
-        "cartoon.php"    to "مسلسلات كارتونية",       // All Cartoon Series
-        "movies.php"     to "أفلام جديدة"             // New/All Movies
+        "index_movies"   to "أفلام جديدة",            // New Movies – from homepage
+        "cartoon.php"    to "مسلسلات كارتونية",       // All Cartoon Series (55 pages)
+        "movies.php"     to "جميع الأفلام"             // All Movies listing
     )
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -48,14 +49,14 @@ class ArabicToons : MainAPI() {
     /** Extract the show/movie numeric ID from a URL slug like "sally-1405893806-anime-streaming.html" */
     private fun extractShowId(href: String): String? {
         // Pattern: ...-{digits}-anime-streaming.html or ...-{digits}-movies-streaming.html
-        val m = Regex("""-(\d{7,12})-(?:anime|movies)-streaming""").find(href)
+        val m = Regex("""-(\d{4,12})-(?:anime|movies)-streaming""").find(href)
         return m?.groupValues?.getOrNull(1)
     }
 
     /** Extract the episode numeric ID from a URL slug like "sally-1405893806-20342.html" */
     private fun extractEpisodeId(href: String): String? {
         // Pattern: ...-{showId}-{episodeId}.html  (episodeId is typically 5-6 digits)
-        val m = Regex("""-(\d{7,12})-(\d{4,8})\.html""").find(href)
+        val m = Regex("""-(\d{4,12})-(\d{3,8})\.html""").find(href)
         return m?.groupValues?.getOrNull(2)
     }
 
@@ -123,38 +124,87 @@ class ArabicToons : MainAPI() {
                     val title = (a.attr("title").ifBlank { null }
                         ?: a.selectFirst("img")?.attr("alt")
                         ?: a.text()).trim().ifBlank { return@forEach }
-                    items.add(buildSearchResponse(title, href, isMovie = false))
+                    val id = extractShowId(href)
+                    val poster = id?.let { posterForShow(it) }
+                        ?: a.selectFirst("img")?.attr("src")?.takeIf { it.startsWith("http") }
+                    val absHref = absoluteUrl(href)
+                    items.add(
+                        newAnimeSearchResponse(title, absHref, TvType.TvSeries) {
+                            posterUrl = poster
+                        }
+                    )
+                }
+            }
+
+            key == "index_movies" -> {
+                // New Movies section from homepage
+                val doc = app.get("$mainUrl/index.php", headers = buildHeaders()).document
+                doc.select("a[href*=-movies-streaming]").forEach { a ->
+                    val href = a.attr("href")
+                    val title = (a.attr("title").ifBlank { null }
+                        ?: a.selectFirst("img")?.attr("alt")
+                        ?: a.text()).trim().ifBlank { return@forEach }
+                    val id = extractShowId(href)
+                    val poster = id?.let { posterForMovie(it) }
+                        ?: a.selectFirst("img")?.attr("src")?.takeIf { it.startsWith("http") }
+                    val absHref = absoluteUrl(href)
+                    items.add(
+                        newAnimeSearchResponse(title, absHref, TvType.Movie) {
+                            posterUrl = poster
+                        }
+                    )
                 }
             }
 
             key == "cartoon.php" -> {
-                // Full cartoon/series listing with pagination
-                val url = if (page == 1) "$mainUrl/cartoon.php" else "$mainUrl/cartoon.php?next=${page - 1}"
+                // Full cartoon/series listing with pagination (55 pages, ~21 per page)
+                val url = if (page == 1) "$mainUrl/cartoon.php" else "$mainUrl/cartoon.php?next=$page"
                 val doc = app.get(url, headers = buildHeaders()).document
                 doc.select("a[href*=-anime-streaming]").forEach { a ->
                     val href = a.attr("href")
                     val title = (a.attr("title").ifBlank { null }
                         ?: a.selectFirst("img")?.attr("alt")
                         ?: a.text()).trim().ifBlank { return@forEach }
-                    items.add(buildSearchResponse(title, href, isMovie = false))
+                    val id = extractShowId(href)
+                    val poster = id?.let { posterForShow(it) }
+                        ?: a.selectFirst("img")?.attr("src")?.takeIf { it.startsWith("http") }
+                    val absHref = absoluteUrl(href)
+                    items.add(
+                        newAnimeSearchResponse(title, absHref, TvType.TvSeries) {
+                            posterUrl = poster
+                        }
+                    )
                 }
             }
 
             key == "movies.php" -> {
-                // Movies listing with pagination
-                val url = if (page == 1) "$mainUrl/movies.php" else "$mainUrl/movies.php?next=${page - 1}"
+                // All Movies listing with pagination
+                val url = if (page == 1) "$mainUrl/movies.php" else "$mainUrl/movies.php?next=$page"
                 val doc = app.get(url, headers = buildHeaders()).document
                 doc.select("a[href*=-movies-streaming]").forEach { a ->
                     val href = a.attr("href")
                     val title = (a.attr("title").ifBlank { null }
                         ?: a.selectFirst("img")?.attr("alt")
                         ?: a.text()).trim().ifBlank { return@forEach }
-                    items.add(buildSearchResponse(title, href, isMovie = true))
+                    val id = extractShowId(href)
+                    val poster = id?.let { posterForMovie(it) }
+                        ?: a.selectFirst("img")?.attr("src")?.takeIf { it.startsWith("http") }
+                    val absHref = absoluteUrl(href)
+                    items.add(
+                        newAnimeSearchResponse(title, absHref, TvType.Movie) {
+                            posterUrl = poster
+                        }
+                    )
                 }
             }
         }
 
-        return newHomePageResponse(request.name, items, hasNext = items.isNotEmpty() && page < 50)
+        val maxPage = when (key) {
+            "cartoon.php" -> 55
+            "movies.php"  -> 30
+            else          -> 1
+        }
+        return newHomePageResponse(request.name, items, hasNext = items.isNotEmpty() && page < maxPage)
     }
 
     // ─── search ───────────────────────────────────────────────────────────────
@@ -247,9 +297,9 @@ class ArabicToons : MainAPI() {
 
             // Extract show ID from URL
             val showId = if (isMovie) {
-                Regex("""-(\d{7,12})-movies-streaming""").find(url)?.groupValues?.getOrNull(1)
+                Regex("""-(\d{4,12})-movies-streaming""").find(url)?.groupValues?.getOrNull(1)
             } else {
-                Regex("""-(\d{7,12})-anime-streaming""").find(url)?.groupValues?.getOrNull(1)
+                Regex("""-(\d{4,12})-anime-streaming""").find(url)?.groupValues?.getOrNull(1)
             }
 
             val poster = showId?.let { if (isMovie) posterForMovie(it) else posterForShow(it) }
