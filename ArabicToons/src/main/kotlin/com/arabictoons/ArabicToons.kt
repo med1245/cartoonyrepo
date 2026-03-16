@@ -99,7 +99,7 @@ class ArabicToons : MainAPI() {
                     if (href.contains(".html") && !href.contains("streaming")) {
                         val epId = extractEpisodeId(href) ?: return@forEach
                         // Derive the show URL from the episode URL by keeping show ID part
-                        val showId = Regex("""-(\d{7,12})-\d{4,8}\.html""").find(href)
+                        val showId = Regex("""-(\d{4,12})-\d{3,8}\.html""").find(href)
                             ?.groupValues?.getOrNull(1) ?: return@forEach
                         if (!seen.add(showId)) return@forEach
 
@@ -124,9 +124,9 @@ class ArabicToons : MainAPI() {
                     val title = (a.attr("title").ifBlank { null }
                         ?: a.selectFirst("img")?.attr("alt")
                         ?: a.text()).trim().ifBlank { return@forEach }
-                    val id = extractShowId(href)
-                    val poster = id?.let { posterForShow(it) }
-                        ?: a.selectFirst("img")?.attr("src")?.takeIf { it.startsWith("http") }
+                    // Priority: actual img src from page > ID-built URL
+                    val imgSrc = a.selectFirst("img")?.attr("src")?.takeIf { it.startsWith("http") }
+                    val poster = imgSrc ?: extractShowId(href)?.let { posterForShow(it) }
                     val absHref = absoluteUrl(href)
                     items.add(
                         newAnimeSearchResponse(title, absHref, TvType.TvSeries) {
@@ -144,9 +144,9 @@ class ArabicToons : MainAPI() {
                     val title = (a.attr("title").ifBlank { null }
                         ?: a.selectFirst("img")?.attr("alt")
                         ?: a.text()).trim().ifBlank { return@forEach }
-                    val id = extractShowId(href)
-                    val poster = id?.let { posterForMovie(it) }
-                        ?: a.selectFirst("img")?.attr("src")?.takeIf { it.startsWith("http") }
+                    // Priority: actual img src from page > ID-built URL
+                    val imgSrc = a.selectFirst("img")?.attr("src")?.takeIf { it.startsWith("http") }
+                    val poster = imgSrc ?: extractShowId(href)?.let { posterForMovie(it) }
                     val absHref = absoluteUrl(href)
                     items.add(
                         newAnimeSearchResponse(title, absHref, TvType.Movie) {
@@ -165,9 +165,9 @@ class ArabicToons : MainAPI() {
                     val title = (a.attr("title").ifBlank { null }
                         ?: a.selectFirst("img")?.attr("alt")
                         ?: a.text()).trim().ifBlank { return@forEach }
-                    val id = extractShowId(href)
-                    val poster = id?.let { posterForShow(it) }
-                        ?: a.selectFirst("img")?.attr("src")?.takeIf { it.startsWith("http") }
+                    // Priority: actual img src from page > ID-built URL
+                    val imgSrc = a.selectFirst("img")?.attr("src")?.takeIf { it.startsWith("http") }
+                    val poster = imgSrc ?: extractShowId(href)?.let { posterForShow(it) }
                     val absHref = absoluteUrl(href)
                     items.add(
                         newAnimeSearchResponse(title, absHref, TvType.TvSeries) {
@@ -186,9 +186,9 @@ class ArabicToons : MainAPI() {
                     val title = (a.attr("title").ifBlank { null }
                         ?: a.selectFirst("img")?.attr("alt")
                         ?: a.text()).trim().ifBlank { return@forEach }
-                    val id = extractShowId(href)
-                    val poster = id?.let { posterForMovie(it) }
-                        ?: a.selectFirst("img")?.attr("src")?.takeIf { it.startsWith("http") }
+                    // Priority: actual img src from page > ID-built URL
+                    val imgSrc = a.selectFirst("img")?.attr("src")?.takeIf { it.startsWith("http") }
+                    val poster = imgSrc ?: extractShowId(href)?.let { posterForMovie(it) }
                     val absHref = absoluteUrl(href)
                     items.add(
                         newAnimeSearchResponse(title, absHref, TvType.Movie) {
