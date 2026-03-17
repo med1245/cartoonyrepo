@@ -201,27 +201,41 @@ class StarDima : MainAPI() {
     // ─── Season ID extraction ─────────────────────────────────────────────────
 
     /**
-     * Returns ALL season IDs found on the show page, in order.
-     * The site shows them as data-season-id attributes on season selector tabs,
-     * or embeds them in script/href patterns like /series/season/123.
+     * Returns ALL season IDs found on a player page, in order.
+     * Confirmed live selectors (2026-03):
+     *   - ul#episodes-list-container[data-initial-season-id]  → primary season
+     *   - a.season-item[data-season-id]                       → other seasons
+     * Generic fallbacks retained for resilience.
      */
     private fun extractAllSeasonIds(doc: Document): List<String> {
-        val ids = mutableListOf<String>()
+        val ids  = mutableListOf<String>()
         val seen = mutableSetOf<String>()
 
-        // 1. data-initial-season-id on any element (single primary season)
+        // 1. CONFIRMED: ul#episodes-list-container data-initial-season-id
+        doc.selectFirst("ul#episodes-list-container[data-initial-season-id]")
+            ?.attr("data-initial-season-id")?.trim()
+            ?.takeIf { it.isNotBlank() && seen.add(it) }
+            ?.let { ids.add(it) }
+
+        // 2. CONFIRMED: a.season-item[data-season-id]
+        for (el in doc.select("a.season-item[data-season-id]")) {
+            val sid = el.attr("data-season-id").trim()
+            if (sid.isNotBlank() && seen.add(sid)) ids.add(sid)
+        }
+
+        // 3. Generic fallback: any [data-initial-season-id]
         doc.selectFirst("[data-initial-season-id]")
             ?.attr("data-initial-season-id")?.trim()
             ?.takeIf { it.isNotBlank() && seen.add(it) }
             ?.let { ids.add(it) }
 
-        // 2. All data-season-id elements (season tabs)
+        // 4. Generic fallback: any [data-season-id]
         for (el in doc.select("[data-season-id]")) {
             val sid = el.attr("data-season-id").trim()
             if (sid.isNotBlank() && seen.add(sid)) ids.add(sid)
         }
 
-        // 3. Scan entire HTML for /series/season/{id} patterns
+        // 5. Scan entire HTML for /series/season/{id} patterns
         val htmlText = doc.html()
         val seasonUrlPattern = Regex("""/series/season/(\d+)""")
         for (m in seasonUrlPattern.findAll(htmlText)) {
@@ -229,7 +243,7 @@ class StarDima : MainAPI() {
             if (seen.add(sid)) ids.add(sid)
         }
 
-        // 4. JS variable patterns: seasonId:57 / "season_id":57 / seasonId=57
+        // 6. JS variable patterns
         val jsPatterns = listOf(
             Regex("""['"_]?season[_\-]?[Ii]d['"]?\s*[:=]\s*['"]?(\d+)"""),
             Regex("""currentSeason\s*[:=]\s*['"]?(\d+)"""),
@@ -336,11 +350,28 @@ class StarDima : MainAPI() {
                 }
                 isTvShow(url) -> {
                     val allEpisodes = mutableListOf<Episode>()
-                    val seasonIds   = extractAllSeasonIds(doc)
-                    Log.d("StarDima", "Found season IDs: $seasonIds for $url")
+
+                    // CONFIRMED FIX: Season IDs only exist on the PLAYER page, not the show home page.
+                    // Strategy: find the first /play/ link from the show page, fetch that player page,
+                    // then extract season IDs from it using confirmed selectors.
+                    val firstPlayUrl = doc.select("a[href*=/play/]").firstOrNull()
+                        ?.attr("abs:href")?.trim()
+
+                    Log.d("StarDima", "First play URL: $firstPlayUrl")
+
+                    val playerDoc = if (!firstPlayUrl.isNullOrBlank()) {
+                        try {
+                            app.get(firstPlayUrl, headers = hdrs()).document
+                        } catch (e: Throwable) {
+                            Log.e("StarDima", "Failed to load player page: ${e.message}")
+                            doc
+                        }
+                    } else doc
+
+                    val seasonIds = extractAllSeasonIds(playerDoc)
+                    Log.d("StarDima", "Found season IDs: $seasonIds")
 
                     if (seasonIds.isNotEmpty()) {
-                        // Fetch episodes for every season found
                         for ((idx, sid) in seasonIds.withIndex()) {
                             val eps = fetchSeasonEpisodes(sid, poster)
                             Log.d("StarDima", "Season $sid → ${eps.size} episodes")
@@ -355,37 +386,21 @@ class StarDima : MainAPI() {
                         }
                     }
 
-                    // HTML fallback
+                    // HTML fallback: scrape episode links from the player page
                     if (allEpisodes.isEmpty()) {
-                        Log.d("StarDima", "Season API gave no episodes, falling back to HTML for $url")
-                        allEpisodes.addAll(extractEpisodesFromHtml(doc, poster))
+                        Log.d("StarDima", "Season API gave no episodes, falling back to HTML")
+                        allEpisodes.addAll(extractEpisodesFromHtml(playerDoc, poster))
                     }
 
-                    // If still empty, try fetching the first episode page for clues
-                    if (allEpisodes.isEmpty()) {
-                        val firstEpLink = doc.select("a[href*=/play/], a[href*=/episode/]").firstOrNull()
-                        if (firstEpLink != null) {
-                            val epUrl = firstEpLink.attr("abs:href").trim()
-                            if (epUrl.isNotBlank()) {
-                                try {
-                                    val epDoc    = app.get(epUrl, headers = hdrs()).document
-                                    val epSeason = extractAllSeasonIds(epDoc)
-                                    for ((idx, sid) in epSeason.withIndex()) {
-                                        val eps = fetchSeasonEpisodes(sid, poster)
-                                        for (ep in eps) {
-                                            allEpisodes.add(newEpisode(ep.data) {
-                                                name      = ep.name
-                                                episode   = ep.episode
-                                                season    = idx + 1
-                                                posterUrl = ep.posterUrl
-                                            })
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    Log.d("StarDima", "Episode-page fallback failed: ${e.message}")
-                                }
-                            }
-                        }
+                    // Last resort: at least add the one play link we found
+                    if (allEpisodes.isEmpty() && !firstPlayUrl.isNullOrBlank()) {
+                        Log.w("StarDima", "Fallback: adding single play link as episode 1")
+                        allEpisodes.add(newEpisode(firstPlayUrl) {
+                            name      = "الحلقة 1"
+                            episode   = 1
+                            season    = 1
+                            posterUrl = poster
+                        })
                     }
 
                     if (allEpisodes.isEmpty()) {
@@ -636,8 +651,9 @@ class StarDima : MainAPI() {
 
             if (!success || watchUrl.isBlank()) return false
 
-            // watchUrl may be strema.top/embed2/?id=lulustream... etc.
-            // Try loadExtractor first (handles known providers)
+            Log.d("StarDima", "HW watch_url: $watchUrl")
+
+            // Try loadExtractor first (handles known providers: uqload, lulustream, etc.)
             if (loadExtractor(watchUrl, referer, subtitleCallback, callback)) return true
 
             // Direct fetch of the watch URL for m3u8/mp4 inside
@@ -675,7 +691,20 @@ class StarDima : MainAPI() {
                 } catch (_: Throwable) {}
             }
 
-            false
+            // FINAL FALLBACK: emit watch_url as a raw link so Cloudstream can open it directly.
+            // This ensures the user sees *something* even if no extractor matched.
+            Log.d("StarDima", "No extractor matched, emitting raw link: $watchUrl")
+            callback(
+                ExtractorLink(
+                    source  = name,
+                    name    = "$name Server",
+                    url     = watchUrl,
+                    referer = referer,
+                    quality = Qualities.Unknown.value,
+                    isM3u8  = watchUrl.contains(".m3u8")
+                )
+            )
+            true
         } catch (t: Throwable) {
             Log.e("StarDima", "tryHyperwatchingPost sid=$serverLinkId: ${t.message}")
             false
