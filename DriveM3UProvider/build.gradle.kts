@@ -2,7 +2,7 @@
 version = 1
 
 cloudstream {
-    description = "Plays Doodstream videos from an M3U playlist hosted on Google Drive, with TMDB metadata"
+    description = "Your personal CleanWatch library — Movies, TV Shows & Channels from GitHub M3U with Doodstream"
     authors = listOf("Mehdi Marsaman")
 
     /**
@@ -14,9 +14,9 @@ cloudstream {
      **/
     status = 1
 
-    tvTypes = listOf("Movie", "TvSeries", "Anime")
+    tvTypes = listOf("Movie", "TvSeries", "Anime", "Live")
 
     language = "ar"
 
-    iconUrl = "https://www.gstatic.com/images/branding/product/1x/drive_2020q4_48dp.png"
+    iconUrl = "https://raw.githubusercontent.com/med1245/cartoonyrepo/master/CleanWatch/src/main/res/drawable/cleanwatch_icon.png"
 }

@@ -1,50 +1,43 @@
-package com.drivem3u
+package com.cleanwatch
 
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.json.JSONObject
-import org.jsoup.Jsoup
 
 /**
- * DriveM3UProvider
+ * CleanWatchProvider
  *
  * A Cloudstream plugin that:
- *  1. Fetches an M3U playlist from Google Drive (public shared file).
- *  2. Parses each #EXTINF entry to get the media title and Doodstream URL.
+ *  1. Fetches an M3U playlist from raw GitHub.
+ *  2. Parses each #EXTINF entry to get the media title and stream URL.
  *  3. Scrapes TMDB for metadata (poster, overview, year) based on the title.
- *  4. Presents all media as playable Movie / TvSeries entries in Cloudstream.
- *
- * ──────────────────────────────────────────────────────────────────
- *  HOW TO CONFIGURE:
- *  • Set M3U_DRIVE_FILE_ID  → the Google Drive file ID of your .m3u file
- *    (the part after "/d/" in the share link, e.g. "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74Ib")
- *  • Set TMDB_API_KEY        → your TMDB v3 API key (free at themoviedb.org/settings/api)
- * ──────────────────────────────────────────────────────────────────
+ *  4. Presents all media as playable Movie / TvSeries / Live entries in Cloudstream.
  */
-class DriveM3UProvider : MainAPI() {
+class CleanWatchProvider : MainAPI() {
 
-    // ── Configuration ────────────────────────────────────────────────────────
-    // Replace with your own Google Drive file ID.
-    // Get it from your share link: https://drive.google.com/file/d/FILE_ID_HERE/view
-    private val M3U_DRIVE_FILE_ID = "1oMRF1td4rCu1aGfN-LPxp6qT6Y88Qa30"
+    // ── Configuration ─────────────────────────────────────────────────────────
+    // Raw GitHub URL of the M3U playlist — update the file on GitHub to refresh content.
+    private val M3U_URL =
+        "https://raw.githubusercontent.com/med1245/cartoonyrepo/refs/heads/master/cleanwatch_playlist.m3u"
 
     // Replace with your TMDB API key. Free registration: https://www.themoviedb.org/settings/api
     // Leave as-is to skip metadata scraping (titles + tvg-logo from M3U will be used).
     private val TMDB_API_KEY = "YOUR_TMDB_API_KEY_HERE"
 
     // ── Provider identity ─────────────────────────────────────────────────────
-    override var mainUrl = "https://drive.google.com"
-    override var name = "DriveM3U"
+    override var mainUrl = "https://raw.githubusercontent.com"
+    override var name = "CleanWatch"
     override var lang = "ar"
     override val hasMainPage = true
-    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
+    override val supportedTypes = setOf(
+        TvType.Movie,
+        TvType.TvSeries,
+        TvType.Anime,
+        TvType.Live
+    )
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
-    /** Build the direct-download URL for a public Google Drive file. */
-    private fun driveDownloadUrl(fileId: String) =
-        "https://drive.google.com/uc?export=download&id=$fileId"
 
     /** Build a TMDB poster URL from a path returned by the API. */
     private fun tmdbPoster(path: String?) =
@@ -56,20 +49,21 @@ class DriveM3UProvider : MainAPI() {
 
     /**
      * A single entry parsed from the M3U file.
-     * [doodUrl] is the Doodstream link from the M3U.
      */
     data class M3UEntry(
         val title: String,
-        val doodUrl: String,
+        val streamUrl: String,
         val groupTitle: String = "",
         val logoUrl: String? = null
     )
 
-    /** Fetch the M3U file from Google Drive and parse it. */
+    /** Fetch the M3U file from raw GitHub and parse it. */
     private suspend fun fetchAndParseM3U(): List<M3UEntry> {
-        val downloadUrl = driveDownloadUrl(M3U_DRIVE_FILE_ID)
         return try {
-            val text = app.get(downloadUrl, headers = mapOf("User-Agent" to "Mozilla/5.0")).text
+            val text = app.get(
+                M3U_URL,
+                headers = mapOf("User-Agent" to "Mozilla/5.0")
+            ).text
             parseM3U(text)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch M3U: ${e.message}")
@@ -81,8 +75,8 @@ class DriveM3UProvider : MainAPI() {
      * Parse raw M3U text.
      *
      * Handles the standard IPTV format:
-     *   #EXTINF:-1 tvg-logo="https://..." group-title="Kids",Show Title
-     *   https://dood.la/e/XXXXXXXXXX
+     *   #EXTINF:-1 tvg-logo="https://..." group-title="Movies",Movie Title
+     *   https://myvidplay.com/e/XXXXXXXXXX
      */
     private fun parseM3U(text: String): List<M3UEntry> {
         val entries = mutableListOf<M3UEntry>()
@@ -162,18 +156,16 @@ class DriveM3UProvider : MainAPI() {
     // ── Data-encoding helpers ─────────────────────────────────────────────────
 
     /**
-     * We store the Doodstream URL prefixed with the title so we can recover
-     * both the title (for TMDB lookup) and the URL in load().
-     *
-     * Format:  dood|<title>|<url>
+     * Encode title + stream URL into a single data string.
+     * Format: cw|<title>|<url>
      */
-    private fun encodeData(title: String, doodUrl: String) = "dood|$title|$doodUrl"
+    private fun encodeData(title: String, streamUrl: String) = "cw|$title|$streamUrl"
 
     private fun decodeTitle(data: String): String =
-        data.removePrefix("dood|").substringBefore("|")
+        data.removePrefix("cw|").substringBefore("|")
 
-    private fun decodeDoodUrl(data: String): String =
-        data.removePrefix("dood|").substringAfter("|")
+    private fun decodeStreamUrl(data: String): String =
+        data.removePrefix("cw|").substringAfter("|")
 
     // ── Cloudstream API ───────────────────────────────────────────────────────
 
@@ -184,11 +176,12 @@ class DriveM3UProvider : MainAPI() {
         val grouped = entries.groupBy { it.groupTitle.ifBlank { "All Media" } }
 
         val sections = grouped.map { (group, items) ->
+            val isLive = group.equals("Channels", ignoreCase = true)
             val cards = items.map { entry ->
                 newMovieSearchResponse(
                     name = entry.title,
-                    url  = encodeData(entry.title, entry.doodUrl),
-                    type = TvType.Movie
+                    url  = encodeData(entry.title, entry.streamUrl),
+                    type = if (isLive) TvType.Live else TvType.Movie
                 ) {
                     this.posterUrl = entry.logoUrl
                 }
@@ -206,7 +199,7 @@ class DriveM3UProvider : MainAPI() {
             .map { entry ->
                 newMovieSearchResponse(
                     name = entry.title,
-                    url  = encodeData(entry.title, entry.doodUrl),
+                    url  = encodeData(entry.title, entry.streamUrl),
                     type = TvType.Movie
                 ) {
                     this.posterUrl = entry.logoUrl
@@ -215,19 +208,26 @@ class DriveM3UProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val title   = decodeTitle(url)
-        val doodUrl = decodeDoodUrl(url)
+        val title     = decodeTitle(url)
+        val streamUrl = decodeStreamUrl(url)
 
         // Scrape TMDB using the actual title (from M3U #EXTINF)
         val meta = tmdbSearch(title)
 
+        // Detect live streams for correct type
+        val isLive = streamUrl.endsWith(".m3u8")
+
         return newMovieLoadResponse(
             name    = meta?.title ?: title,
             url     = url,
-            type    = meta?.type ?: TvType.Movie,
+            type    = if (isLive) TvType.Live else (meta?.type ?: TvType.Movie),
             dataUrl = url
         ) {
-            this.posterUrl           = tmdbPoster(meta?.posterPath)
+            this.posterUrl           = meta?.posterPath?.let { tmdbPoster(it) }
+                ?: run {
+                    // Fall back to the tvg-logo from M3U (stored in logoUrl via search)
+                    null
+                }
             this.backgroundPosterUrl = tmdbBackdrop(meta?.backdropPath)
             this.plot                = meta?.overview
             this.year                = meta?.year
@@ -240,66 +240,16 @@ class DriveM3UProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val streamUrl = decodeDoodUrl(data)
+        val streamUrl = decodeStreamUrl(data)
         Log.d(TAG, "loadLinks url=$streamUrl")
 
-        // ── myvidplay.com extractor ───────────────────────────────────────────
-        if (streamUrl.contains("myvidplay.com")) {
-            return try {
-                val html = app.get(
-                    streamUrl,
-                    headers = mapOf("User-Agent" to "Mozilla/5.0")
-                ).text
-
-                // 1. Try og:video meta tag
-                var directUrl = Regex("""<meta[^>]+property=["']og:video["'][^>]+content=["']([^"']+)["']""").find(html)
-                    ?.groupValues?.getOrNull(1)?.trim()
-
-                // 2. Try jwplayer / file: "..." pattern
-                if (directUrl.isNullOrBlank()) {
-                    directUrl = Regex("""["']?file["']?\s*:\s*["']([^"']+\.mp4[^"']*)["']""").find(html)
-                        ?.groupValues?.getOrNull(1)?.trim()
-                }
-
-                // 3. Try sources:[{file:"..."}] pattern
-                if (directUrl.isNullOrBlank()) {
-                    directUrl = Regex("""sources\s*:\s*\[\s*\{[^}]*file\s*:\s*["']([^"']+)["']""").find(html)
-                        ?.groupValues?.getOrNull(1)?.trim()
-                }
-
-                if (!directUrl.isNullOrBlank()) {
-                    Log.d(TAG, "myvidplay direct url=$directUrl")
-                    callback(
-                        newExtractorLink(name, "$name [myvidplay]", directUrl, ExtractorLinkType.VIDEO) {
-                            this.referer = streamUrl
-                            this.quality = Qualities.Unknown.value
-                        }
-                    )
-                    true
-                } else {
-                    Log.w(TAG, "myvidplay: could not extract direct URL from page")
-                    // Last resort: push the page URL and hope the player handles it
-                    callback(
-                        newExtractorLink(name, "$name Direct", streamUrl, ExtractorLinkType.VIDEO) {
-                            this.referer = mainUrl
-                            this.quality = Qualities.Unknown.value
-                        }
-                    )
-                    false
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "myvidplay extraction failed: ${e.message}")
-                false
-            }
-        }
-
-        // ── HLS / plain stream pass-through ──────────────────────────────────
-        if (streamUrl.endsWith(".m3u8") || streamUrl.endsWith(".mp4")) {
+        // ── HLS (.m3u8) / plain MP4 pass-through ─────────────────────────────
+        if (streamUrl.endsWith(".m3u8") || streamUrl.contains(".m3u8?") ||
+            streamUrl.endsWith(".mp4")  || streamUrl.contains(".mp4?")) {
+            val type = if (streamUrl.contains(".m3u8")) ExtractorLinkType.M3U8
+                       else ExtractorLinkType.VIDEO
             callback(
-                newExtractorLink(
-                    name, "$name Direct", streamUrl,
-                    if (streamUrl.endsWith(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                ) {
+                newExtractorLink(name, "$name Direct", streamUrl, type) {
                     this.referer = mainUrl
                     this.quality = Qualities.Unknown.value
                 }
@@ -307,12 +257,14 @@ class DriveM3UProvider : MainAPI() {
             return true
         }
 
-        // ── Default: Cloudstream built-in extractor (Doodstream etc.) ─────────
+        // ── myvidplay.com / Doodstream embed ──────────────────────────────────
+        // Both use the same Doodstream infrastructure; loadExtractor handles them.
         return try {
             loadExtractor(streamUrl, mainUrl, subtitleCallback, callback)
             true
         } catch (e: Exception) {
             Log.e(TAG, "loadExtractor failed: ${e.message}")
+            // Last-resort: push raw URL
             callback(
                 newExtractorLink(name, "$name Direct", streamUrl, ExtractorLinkType.VIDEO) {
                     this.referer = mainUrl
@@ -324,6 +276,6 @@ class DriveM3UProvider : MainAPI() {
     }
 
     companion object {
-        private const val TAG = "DriveM3UProvider"
+        private const val TAG = "CleanWatchProvider"
     }
 }
