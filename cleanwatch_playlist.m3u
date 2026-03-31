@@ -1,0 +1,45 @@
+#EXTM3U
+
+# ═══════════════════════════════════════════════
+#  CleanWatch M3U Playlist
+#
+#  HOW TO USE:
+#  1. Replace the dood.la URLs with YOUR Doodstream links.
+#  2. Replace tvg-logo URLs with your poster image URLs.
+#  3. Upload this file to Google Drive and share as
+#     "Anyone with the link - Viewer".
+#  4. Copy the File ID from the share link and paste
+#     it into CleanWatchProvider.kt line 27.
+#
+#  SECTIONS:
+#    group-title="Movies"    → appears as Movies section
+#    group-title="TV Shows"  → appears as TV Shows section
+#    group-title="Channels"  → appears as Live Channels section
+# ═══════════════════════════════════════════════
+
+
+# ───────────────────────────────────────────────
+#  🎬  MOVIES
+# ───────────────────────────────────────────────
+
+#EXTINF:-1 tvg-logo="https://i.ebayimg.com/00/s/MTYwMFgxMDY2/z/-dsAAOSwXS5ir7bq/$_57.JPG?set_id=880000500F" group-title="Movies",avatar
+https://myvidplay.com/e/1yhz2awpod5z
+
+
+
+# ───────────────────────────────────────────────
+#  📺  TV SHOWS
+# ───────────────────────────────────────────────
+
+#EXTINF:-1 tvg-logo="https://image.tmdb.org/t/p/w500/example6.jpg" group-title="TV Shows",Breaking Bad S01E01
+https://dood.la/e/REPLACE_WITH_YOUR_DOOD_ID
+
+
+
+# ───────────────────────────────────────────────
+#  📡  CHANNELS  (Live TV / YouTube-style)
+# ───────────────────────────────────────────────
+
+#EXTINF:-1 tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/No-Image-Placeholder.svg/1200px-No-Image-Placeholder.svg.png" group-title="Channels",spacetoon
+https://list.iptvcat.com/my_list/s/e158dd3718e79968a38d4cbad8ab1f4d.m3u8
+
