@@ -193,15 +193,12 @@ class PGMEDProvider : MainAPI() {
             return true
         }
 
-        // ── Step 2: Fetch the download page and extract UUID confirmation token
-        // For large files, Google returns an HTML warning page containing a UUID token.
-        // We must parse that UUID and include it in the final download URL.
+        // ── Step 2: Fetch the virus-scan confirmation page and extract the real download URL
         try {
             val headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
             )
-
             val pageResp = app.get(
                 "https://drive.google.com/uc?export=download&id=$id",
                 referer  = "https://drive.google.com/",
@@ -210,11 +207,11 @@ class PGMEDProvider : MainAPI() {
             val finalUrl = pageResp.url
             val html     = pageResp.text
 
-            // If the final URL is already a direct file (no drive.google.com), use it
+            // Redirected directly to a non-Google URL → real file
             if (!finalUrl.contains("drive.google.com") &&
                 !finalUrl.contains("accounts.google.com") &&
                 finalUrl.startsWith("http")) {
-                Log.d(TAG, "Direct redirect: $finalUrl")
+                Log.d(TAG, "Direct redirect to: $finalUrl")
                 callback(
                     newExtractorLink(name, "Google Drive", finalUrl, ExtractorLinkType.VIDEO) {
                         this.referer = "https://drive.google.com/"
@@ -224,17 +221,35 @@ class PGMEDProvider : MainAPI() {
                 return true
             }
 
-            // Parse UUID from the confirmation form / link
-            //   <input type="hidden" name="uuid" value="XXXX">
-            //   OR uuid=XXXX in anchor href
+            // Strategy A: grab the full usercontent URL embedded in the confirmation page
+            // (works regardless of HTML attribute order)
+            val ucontentMatch = Regex(
+                """(https://drive\.usercontent\.google\.com/download\?[^"'\s<>\\]+)"""
+            ).find(html)?.groupValues?.get(1)
+                ?.replace("&amp;", "&")
+                ?.replace("\\u003d", "=")
+                ?.replace("\\u0026", "&")
+
+            if (ucontentMatch != null && ucontentMatch.contains("uuid=")) {
+                Log.d(TAG, "Strategy A usercontent URL: $ucontentMatch")
+                callback(
+                    newExtractorLink(name, "Google Drive", ucontentMatch, ExtractorLinkType.VIDEO) {
+                        this.referer = "https://drive.google.com/"
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+                return true
+            }
+
+            // Strategy B: extract UUID value from hidden input fields (both attribute orders)
             val uuid = Regex("""name=.uuid.\s+value=.([^"'>\s]+)""").find(html)?.groupValues?.get(1)
+                ?: Regex("""value=.([^"'>\s]+).\s+name=.uuid.""").find(html)?.groupValues?.get(1)
                 ?: Regex("""[?&]uuid=([^&"'\s<>]+)""").find(html)?.groupValues?.get(1)
-                ?: Regex("""[\\"']uuid[\\"']\s*:\s*[\\"']([^"'\\]+)""").find(html)?.groupValues?.get(1)
 
             if (uuid != null) {
                 val confirmUrl = "https://drive.usercontent.google.com/download" +
                     "?id=$id&export=download&authuser=0&confirm=t&uuid=$uuid"
-                Log.d(TAG, "UUID confirmation URL: $confirmUrl")
+                Log.d(TAG, "Strategy B UUID URL: $confirmUrl")
                 callback(
                     newExtractorLink(name, "Google Drive", confirmUrl, ExtractorLinkType.VIDEO) {
                         this.referer = "https://drive.google.com/"
@@ -243,8 +258,10 @@ class PGMEDProvider : MainAPI() {
                 )
                 return true
             }
+
+            Log.w(TAG, "No confirmation URL found in page. HTML snippet: ${html.take(500)}")
         } catch (e: Exception) {
-            Log.w(TAG, "UUID extraction failed: ${e.message}")
+            Log.w(TAG, "Confirmation page extraction failed: ${e.message}")
         }
 
         // ── Step 3: usercontent.google.com without UUID (sometimes works for smaller/shared files)
