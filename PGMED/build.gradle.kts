@@ -1,8 +1,8 @@
 // Use an integer for version numbers
-version = 10
+version = 11
 
 cloudstream {
-    description = "PGMED — Your personal video library hosted on PlayMogo"
+    description = "PGMED — Your personal video library hosted on Google Drive"
     authors = listOf("Mehdi Marsaman")
 
     /**

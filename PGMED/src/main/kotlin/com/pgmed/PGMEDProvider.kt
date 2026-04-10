@@ -65,6 +65,13 @@ class PGMEDProvider : MainAPI() {
         return parseFormEncoded(cipher)["url"]?.let { URLDecoder.decode(it, "UTF-8") }
     }
 
+    private fun parseHeight(format: JSONObject): Int {
+        val directHeight = format.optInt("height", 0)
+        if (directHeight > 0) return directHeight
+        val label = format.optString("qualityLabel")
+        return Regex("""(\d{3,4})p""").find(label)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+    }
+
     // ── IMDb / Cinemeta Metadata ─────────────────────────────────────────────
     data class MetaData(
         val title: String,
@@ -244,35 +251,68 @@ class PGMEDProvider : MainAPI() {
                 val playerResponse = JSONObject(playerResponseRaw)
                 val streamingData = playerResponse.optJSONObject("streamingData")
                 val hlsManifestUrl = streamingData?.optString("hlsManifestUrl")?.takeIf { it.startsWith("http") }
-                if (!hlsManifestUrl.isNullOrBlank()) {
-                    Log.d(TAG, "Found hlsManifestUrl in player_response")
+
+                data class DriveCandidate(
+                    val url: String,
+                    val height: Int,
+                    val hasAudio: Boolean
+                )
+
+                val candidates = mutableListOf<DriveCandidate>()
+                val arrays = listOf(
+                    streamingData?.optJSONArray("formats"),
+                    streamingData?.optJSONArray("adaptiveFormats")
+                )
+                arrays.forEach { arr ->
+                    if (arr == null) return@forEach
+                    for (i in 0 until arr.length()) {
+                        val format = arr.optJSONObject(i) ?: continue
+                        val mimeType = format.optString("mimeType")
+                        if (!mimeType.contains("video")) continue
+                        val directUrl = format.optString("url").takeIf { it.startsWith("http") }
+                            ?: format.optString("signatureCipher").let { extractUrlFromCipher(it) }
+                            ?: format.optString("cipher").let { extractUrlFromCipher(it) }
+                        if (directUrl.isNullOrBlank()) continue
+                        val height = parseHeight(format)
+                        val hasAudio = format.optInt("audioChannels", 0) > 0 ||
+                            mimeType.contains("mp4a") || mimeType.contains("opus") || mimeType.contains("vorbis")
+                        candidates.add(DriveCandidate(directUrl, height, hasAudio))
+                    }
+                }
+
+                val bestMuxed = candidates.filter { it.hasAudio }.maxByOrNull { it.height }
+                if (bestMuxed != null) {
+                    Log.d(TAG, "Found best muxed format URL: ${bestMuxed.height}p")
                     callback(
-                        newExtractorLink(name, "Google Drive HLS", hlsManifestUrl, ExtractorLinkType.M3U8) {
+                        newExtractorLink(name, "Google Drive ${bestMuxed.height}p", bestMuxed.url, ExtractorLinkType.VIDEO) {
                             this.referer = "https://drive.google.com/"
-                            this.quality = Qualities.Unknown.value
+                            this.quality = if (bestMuxed.height > 0) bestMuxed.height else Qualities.Unknown.value
                         }
                     )
                     return true
                 }
 
-                val formats = streamingData?.optJSONArray("formats")
-                if (formats != null) {
-                    for (i in 0 until formats.length()) {
-                        val format = formats.optJSONObject(i) ?: continue
-                        val directUrl = format.optString("url").takeIf { it.startsWith("http") }
-                            ?: format.optString("signatureCipher").let { extractUrlFromCipher(it) }
-                            ?: format.optString("cipher").let { extractUrlFromCipher(it) }
-                        if (!directUrl.isNullOrBlank()) {
-                            Log.d(TAG, "Found direct format URL in player_response")
-                            callback(
-                                newExtractorLink(name, "Google Drive Video", directUrl, ExtractorLinkType.VIDEO) {
-                                    this.referer = "https://drive.google.com/"
-                                    this.quality = Qualities.Unknown.value
-                                }
-                            )
-                            return true
+                if (!hlsManifestUrl.isNullOrBlank()) {
+                    Log.d(TAG, "Found hlsManifestUrl in player_response")
+                    callback(
+                        newExtractorLink(name, "Google Drive HLS", hlsManifestUrl, ExtractorLinkType.M3U8) {
+                            this.referer = "https://drive.google.com/"
+                            this.quality = Qualities.P1080.value
                         }
-                    }
+                    )
+                    return true
+                }
+
+                val bestAny = candidates.maxByOrNull { it.height }
+                if (bestAny != null) {
+                    Log.d(TAG, "Found best format URL: ${bestAny.height}p")
+                    callback(
+                        newExtractorLink(name, "Google Drive ${bestAny.height}p", bestAny.url, ExtractorLinkType.VIDEO) {
+                            this.referer = "https://drive.google.com/"
+                            this.quality = if (bestAny.height > 0) bestAny.height else Qualities.Unknown.value
+                        }
+                    )
+                    return true
                 }
             }
         } catch (e: Exception) {
