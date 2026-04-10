@@ -172,20 +172,32 @@ class PGMEDProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "loadLinks url=$data")
+        Log.d(TAG, "loadLinks data=$data")
         
-        // Google Drive is natively supported by CloudStream's standard extractors!
-        // We just pass the Google Drive URL straight to loadExtractor.
-        try {
-            val success = loadExtractor(data, referer = mainUrl, subtitleCallback, callback)
-            if (success) return true
-        } catch (e: Exception) {
-            Log.e(TAG, "loadExtractor failed: ${e.message}")
+        // Check if it's a Google Drive URL
+        if (data.contains("drive.google.com")) {
+            // Extract the ID from either /d/XXXX/view or id=XXXX
+            val idMatch = Regex("d/([^/]+)|id=([^&]+)").find(data)
+            val id = idMatch?.groupValues?.get(1)?.ifBlank { null } 
+                  ?: idMatch?.groupValues?.get(2)
+                  
+            if (id != null) {
+                // The /uc?export=download endpoint forces a direct file download 
+                val directUrl = "https://drive.google.com/uc?export=download&id=$id"
+                
+                callback(
+                    newExtractorLink(name, "Google Drive (MP4)", directUrl, ExtractorLinkType.VIDEO) {
+                        this.referer = "https://drive.google.com/"
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+                return true
+            }
         }
         
         // Fallback: provide raw URL to webview if needed
         callback(
-            newExtractorLink(name, "$name Raw Embed", data, ExtractorLinkType.VIDEO) {
+            newExtractorLink(name, "$name Raw Link", data, ExtractorLinkType.VIDEO) {
                 this.referer = mainUrl
                 this.quality = Qualities.Unknown.value
             }
