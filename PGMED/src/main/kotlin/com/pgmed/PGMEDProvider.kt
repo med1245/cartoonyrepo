@@ -4,6 +4,7 @@ import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.json.JSONObject
+import java.net.URLDecoder
 
 class PGMEDProvider : MainAPI() {
 
@@ -40,6 +41,28 @@ class PGMEDProvider : MainAPI() {
 
     private fun findItem(url: String): MediaItem? {
         return allItems.find { url.contains(it.url) || it.url.contains(url) || url == it.url }
+    }
+
+    private fun extractDriveFileId(url: String): String? {
+        return Regex("""(?:/d/|[?&]id=|/uc\?id=|/file/d/)([a-zA-Z0-9_-]{20,})""")
+            .find(url)
+            ?.groupValues
+            ?.get(1)
+    }
+
+    private fun parseFormEncoded(data: String): Map<String, String> {
+        if (data.isBlank()) return emptyMap()
+        return data.split("&").mapNotNull { part ->
+            val idx = part.indexOf('=')
+            if (idx <= 0) return@mapNotNull null
+            val key = URLDecoder.decode(part.substring(0, idx), "UTF-8")
+            val value = URLDecoder.decode(part.substring(idx + 1), "UTF-8")
+            key to value
+        }.toMap()
+    }
+
+    private fun extractUrlFromCipher(cipher: String): String? {
+        return parseFormEncoded(cipher)["url"]?.let { URLDecoder.decode(it, "UTF-8") }
     }
 
     // ── IMDb / Cinemeta Metadata ─────────────────────────────────────────────
@@ -180,20 +203,83 @@ class PGMEDProvider : MainAPI() {
         }
 
         // Extract the file ID
-        val id = Regex("""(?:/d/|[?&]id=)([a-zA-Z0-9_-]{20,})""").find(data)?.groupValues?.get(1)
+        val id = extractDriveFileId(data)
         if (id == null) {
             Log.w(TAG, "Could not extract Drive file ID from: $data")
             return false
         }
         Log.d(TAG, "Drive file ID: $id")
 
-        // ── Step 1: Try CloudStream's built-in extractor system
-        if (loadExtractor(data, "https://drive.google.com/", subtitleCallback, callback)) {
+        // ── Step 1: Try CloudStream's built-in extractor system with normalized Drive watch URL
+        val normalizedWatchUrl = "https://drive.google.com/file/d/$id/view"
+        if (loadExtractor(normalizedWatchUrl, "https://drive.google.com/", subtitleCallback, callback)) {
             Log.d(TAG, "Built-in extractor succeeded")
             return true
         }
 
-        // ── Step 2: Fetch the virus-scan confirmation page and extract the real download URL
+        // ── Step 2: Prefer real streaming URLs from Drive video info (avoids HTML container parsing errors)
+        try {
+            val infoUrl = "https://drive.google.com/get_video_info?docid=$id"
+            val infoResp = app.get(
+                infoUrl,
+                referer = "https://drive.google.com/"
+            ).text
+
+            val infoMap = parseFormEncoded(infoResp)
+            val playerResponseRaw = infoMap["player_response"]
+            val hlsvp = infoMap["hlsvp"]?.takeIf { it.startsWith("http") }
+
+            if (!hlsvp.isNullOrBlank()) {
+                Log.d(TAG, "Found hlsvp in get_video_info")
+                callback(
+                    newExtractorLink(name, "Google Drive HLS", hlsvp, ExtractorLinkType.M3U8) {
+                        this.referer = "https://drive.google.com/"
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+                return true
+            }
+
+            if (!playerResponseRaw.isNullOrBlank()) {
+                val playerResponse = JSONObject(playerResponseRaw)
+                val streamingData = playerResponse.optJSONObject("streamingData")
+                val hlsManifestUrl = streamingData?.optString("hlsManifestUrl")?.takeIf { it.startsWith("http") }
+                if (!hlsManifestUrl.isNullOrBlank()) {
+                    Log.d(TAG, "Found hlsManifestUrl in player_response")
+                    callback(
+                        newExtractorLink(name, "Google Drive HLS", hlsManifestUrl, ExtractorLinkType.M3U8) {
+                            this.referer = "https://drive.google.com/"
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
+                    return true
+                }
+
+                val formats = streamingData?.optJSONArray("formats")
+                if (formats != null) {
+                    for (i in 0 until formats.length()) {
+                        val format = formats.optJSONObject(i) ?: continue
+                        val directUrl = format.optString("url").takeIf { it.startsWith("http") }
+                            ?: format.optString("signatureCipher").let { extractUrlFromCipher(it) }
+                            ?: format.optString("cipher").let { extractUrlFromCipher(it) }
+                        if (!directUrl.isNullOrBlank()) {
+                            Log.d(TAG, "Found direct format URL in player_response")
+                            callback(
+                                newExtractorLink(name, "Google Drive Video", directUrl, ExtractorLinkType.VIDEO) {
+                                    this.referer = "https://drive.google.com/"
+                                    this.quality = Qualities.Unknown.value
+                                }
+                            )
+                            return true
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "get_video_info extraction failed: ${e.message}")
+        }
+
+        // ── Step 3: Fetch the virus-scan confirmation page and extract the real download URL
         try {
             val headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -264,7 +350,7 @@ class PGMEDProvider : MainAPI() {
             Log.w(TAG, "Confirmation page extraction failed: ${e.message}")
         }
 
-        // ── Step 3: usercontent.google.com without UUID (sometimes works for smaller/shared files)
+        // ── Step 4: usercontent.google.com without UUID (sometimes works for smaller/shared files)
         val ucontentUrl = "https://drive.usercontent.google.com/download" +
             "?id=$id&export=download&authuser=0&confirm=t"
         Log.d(TAG, "Fallback usercontent URL: $ucontentUrl")

@@ -1,5 +1,5 @@
 // Use an integer for version numbers
-version = 9
+version = 10
 
 cloudstream {
     description = "PGMED — Your personal video library hosted on PlayMogo"
