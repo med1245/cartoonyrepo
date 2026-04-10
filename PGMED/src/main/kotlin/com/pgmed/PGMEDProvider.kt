@@ -168,20 +168,73 @@ class PGMEDProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         Log.d(TAG, "loadLinks data=$data")
-        
-        // Check if it's a Google Drive URL
+
         if (data.contains("drive.google.com")) {
-            // Extract the ID from either /d/XXXX/view or id=XXXX
-            val idMatch = Regex("d/([^/]+)|id=([^&]+)").find(data)
-            val id = idMatch?.groupValues?.get(1)?.ifBlank { null } 
-                  ?: idMatch?.groupValues?.get(2)
-                  
+            val idMatch = Regex("""(?:d/|id=)([a-zA-Z0-9_-]{20,})""").find(data)
+            val id = idMatch?.groupValues?.get(1)
+
             if (id != null) {
-                // The /uc?export=download endpoint forces a direct file download 
-                val directUrl = "https://drive.google.com/uc?export=download&confirm=t&id=$id"
-                
+                // ── Tier 1: drive.usercontent.google.com (Google's newer direct endpoint)
+                try {
+                    val usercontent = "https://drive.usercontent.google.com/download" +
+                        "?id=$id&export=download&authuser=0&confirm=t"
+                    val response = app.get(usercontent, referer = "https://drive.google.com/")
+                    val finalUrl = response.url  // follow redirects to the real MP4
+                    if (!finalUrl.contains("accounts.google.com") &&
+                        !finalUrl.contains("drive.google.com/file")) {
+                        Log.d(TAG, "Tier-1 resolved to: $finalUrl")
+                        callback(
+                            newExtractorLink(name, "Google Drive", finalUrl, ExtractorLinkType.VIDEO) {
+                                this.referer = "https://drive.google.com/"
+                                this.quality = Qualities.Unknown.value
+                            }
+                        )
+                        return true
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Tier-1 failed: ${e.message}")
+                }
+
+                // ── Tier 2: parse the viewer page for embedded stream URLs
+                try {
+                    val viewerHtml = app.get(
+                        "https://drive.google.com/file/d/$id/view",
+                        referer = "https://drive.google.com/"
+                    ).text
+
+                    // Google embeds stream info as a JSON array in the page
+                    // pattern: "url":"https://...googleusercontent.com/..."
+                    val streamUrls = Regex(""""url":"(https://[^"]*googleusercontent\.com/[^"]+)"""")
+                        .findAll(viewerHtml)
+                        .map { it.groupValues[1]
+                            .replace("\\u003d", "=")
+                            .replace("\\u0026", "&")
+                            .replace("\\/", "/")
+                        }
+                        .filter { it.contains("itag") || it.contains("mime") || it.contains(".mp4") }
+                        .toList()
+
+                    if (streamUrls.isNotEmpty()) {
+                        streamUrls.forEachIndexed { idx, url ->
+                            Log.d(TAG, "Tier-2 stream[$idx]: $url")
+                            callback(
+                                newExtractorLink(name, "GDrive Stream ${idx + 1}", url, ExtractorLinkType.VIDEO) {
+                                    this.referer = "https://drive.google.com/"
+                                    this.quality = Qualities.Unknown.value
+                                }
+                            )
+                        }
+                        return true
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Tier-2 failed: ${e.message}")
+                }
+
+                // ── Tier 3: classic uc?export=download (works for small files)
+                val fallbackUrl = "https://drive.google.com/uc?export=download&confirm=t&id=$id"
+                Log.d(TAG, "Tier-3 fallback: $fallbackUrl")
                 callback(
-                    newExtractorLink(name, "Google Drive (MP4)", directUrl, ExtractorLinkType.VIDEO) {
+                    newExtractorLink(name, "Google Drive (DL)", fallbackUrl, ExtractorLinkType.VIDEO) {
                         this.referer = "https://drive.google.com/"
                         this.quality = Qualities.Unknown.value
                     }
@@ -189,10 +242,10 @@ class PGMEDProvider : MainAPI() {
                 return true
             }
         }
-        
-        // Fallback: provide raw URL to webview if needed
+
+        // Not a Drive URL — pass raw
         callback(
-            newExtractorLink(name, "$name Raw Link", data, ExtractorLinkType.VIDEO) {
+            newExtractorLink(name, "$name Link", data, ExtractorLinkType.VIDEO) {
                 this.referer = mainUrl
                 this.quality = Qualities.Unknown.value
             }

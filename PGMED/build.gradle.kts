@@ -1,5 +1,5 @@
 // Use an integer for version numbers
-version = 5
+version = 7
 
 cloudstream {
     description = "PGMED — Your personal video library hosted on PlayMogo"
@@ -18,5 +18,5 @@ cloudstream {
 
     language = "ar"
 
-    iconUrl = ""
+    iconUrl = "https://drive.google.com/thumbnail?id=1fhT2IeDtKH-Q7DETP2k_sQtHAXybOFFG&sz=s1000"
 }
