@@ -3,11 +3,12 @@ package com.pgmed
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import org.json.JSONObject
 
 class PGMEDProvider : MainAPI() {
 
     // ── Provider identity ────────────────────────────────────────────────────
-    override var mainUrl = "https://playmogo.com"
+    override var mainUrl = "https://drive.google.com" // Set to Google Drive
     override var name = "PGMED"
     override var lang = "ar"
     override val hasMainPage = true
@@ -25,7 +26,7 @@ class PGMEDProvider : MainAPI() {
         "Latest Movies" to listOf(
             MediaItem(
                 title = "Avatar: Fire and Ash (2025)",
-                url = "https://playmogo.com/e/1yhz2awpod5z",
+                url = "https://drive.google.com/file/d/1KzPyVgMsYv8jvcCv-saLmxmTMbrlnmLW/view?usp=drive_link",
                 posterUrl = "https://m.media-amazon.com/images/M/MV5BZDYxY2I1OGMtN2Y4MS00ZmU1LTgyNDAtODA0MzAyYjI0N2Y2XkEyXkFqcGc@._V1_FMjpg_UX1000_.jpg",
                 type = TvType.Movie
             )
@@ -33,20 +34,53 @@ class PGMEDProvider : MainAPI() {
         "Trending Series" to listOf(
             MediaItem(
                 title = "hack",
-                url = "https://playmogo.com/e/1yhz2awpod5z",
+                url = "https://drive.google.com/file/d/1KzPyVgMsYv8jvcCv-saLmxmTMbrlnmLW/view?usp=drive_link",
                 posterUrl = "https://upload.wikimedia.org/wikipedia/en/thumb/5/58/Blackhat_poster.jpg/250px-Blackhat_poster.jpg",
                 type = TvType.TvSeries
             )
         )
     )
 
-    // Flat list for search / load lookups
     private val allItems get() = catalog.values.flatten()
 
-    /** Look up a catalog item by its URL */
     private fun findItem(url: String): MediaItem? {
-        // The url from CloudStream may have been cleaned/modified, try to match flexibly
         return allItems.find { url.contains(it.url) || it.url.contains(url) || url == it.url }
+    }
+
+    // ── IMDb / Cinemeta Metadata ─────────────────────────────────────────────
+    data class MetaData(
+        val title: String,
+        val posterPath: String?,
+        val backgroundPath: String?,
+        val plot: String?,
+        val year: Int?
+    )
+
+    private suspend fun fetchCinemeta(query: String, type: TvType): MetaData? {
+        return try {
+            val typeStr = if (type == TvType.TvSeries) "series" else "movie"
+            // Clean the query slightly
+            val cleanQuery = query.replace("\\(.*?\\)".toRegex(), "").trim()
+            val encodedQuery = java.net.URLEncoder.encode(cleanQuery, "UTF-8")
+            val url = "https://v3-cinemeta.strem.io/catalog/$typeStr/top/search=$encodedQuery.json"
+            
+            val response = app.get(url).text
+            val json = JSONObject(response)
+            val metas = json.optJSONArray("metas")
+            if (metas != null && metas.length() > 0) {
+                val top = metas.getJSONObject(0)
+                MetaData(
+                    title = top.optString("name", cleanQuery),
+                    posterPath = top.optString("poster", "").ifBlank { null },
+                    backgroundPath = top.optString("background", "").ifBlank { null },
+                    plot = top.optString("description", "").ifBlank { null },
+                    year = top.optString("releaseInfo", top.optString("year", "")).take(4).toIntOrNull()
+                )
+            } else null
+        } catch (e: Exception) {
+            Log.e(TAG, "Cinemeta search failed: ${e.message}")
+            null
+        }
     }
 
     // ── Homepage ─────────────────────────────────────────────────────────────
@@ -92,15 +126,42 @@ class PGMEDProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         Log.d(TAG, "load url=$url")
         val item = findItem(url)
+        val actualTitle = item?.title ?: "PGMED Video"
+        val actualType = item?.type ?: TvType.Movie
+        
+        // Fetch metadata from IMDb via Stremio Cinemeta
+        val meta = fetchCinemeta(actualTitle, actualType)
 
-        return newMovieLoadResponse(
-            name = item?.title ?: "PGMED Video",
-            url = url,
-            type = item?.type ?: TvType.Movie,
-            dataUrl = item?.url ?: url
-        ) {
-            this.posterUrl = item?.posterUrl
-            this.plot = item?.title
+        if (actualType == TvType.TvSeries) {
+            return newTvSeriesLoadResponse(
+                name = meta?.title ?: actualTitle,
+                url = url,
+                type = actualType,
+                episodes = listOf(
+                    newEpisode(item?.url ?: url) {
+                        this.name = "Episode 1"
+                        this.posterUrl = meta?.posterPath ?: item?.posterUrl
+                        this.description = meta?.plot
+                    }
+                )
+            ) {
+                this.posterUrl = meta?.posterPath ?: item?.posterUrl
+                this.backgroundPosterUrl = meta?.backgroundPath
+                this.plot = meta?.plot
+                this.year = meta?.year
+            }
+        } else {
+            return newMovieLoadResponse(
+                name = meta?.title ?: actualTitle,
+                url = url,
+                type = actualType,
+                dataUrl = item?.url ?: url
+            ) {
+                this.posterUrl = meta?.posterPath ?: item?.posterUrl
+                this.backgroundPosterUrl = meta?.backgroundPath
+                this.plot = meta?.plot
+                this.year = meta?.year
+            }
         }
     }
 
@@ -111,60 +172,20 @@ class PGMEDProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "loadLinks data=$data")
-
-        // The data is the playmogo embed URL, e.g. https://playmogo.com/e/XXXXX
-        // Try converting /e/ to /d/ for Doodstream-compatible extraction
-        val embedUrl = data.trim()
-
-        // Try loadExtractor with the original URL first
+        Log.d(TAG, "loadLinks url=$data")
+        
+        // Google Drive is natively supported by CloudStream's standard extractors!
+        // We just pass the Google Drive URL straight to loadExtractor.
         try {
-            val result = loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)
-            if (result) return true
+            val success = loadExtractor(data, referer = mainUrl, subtitleCallback, callback)
+            if (success) return true
         } catch (e: Exception) {
-            Log.e(TAG, "loadExtractor on embed failed: ${e.message}")
+            Log.e(TAG, "loadExtractor failed: ${e.message}")
         }
-
-        // Try with /d/ path (Doodstream download page pattern)
-        val doodUrl = embedUrl.replace("/e/", "/d/")
-        if (doodUrl != embedUrl) {
-            try {
-                val result = loadExtractor(doodUrl, mainUrl, subtitleCallback, callback)
-                if (result) return true
-            } catch (e: Exception) {
-                Log.e(TAG, "loadExtractor on /d/ failed: ${e.message}")
-            }
-        }
-
-        // Fallback: try to scrape the embed page for a direct video URL
-        try {
-            val response = app.get(embedUrl, referer = mainUrl)
-            val html = response.text
-
-            // Look for common video URL patterns in the page
-            val mp4Match = Regex("""(https?://[^\s"']+\.mp4[^\s"']*)""").find(html)
-            val m3u8Match = Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)""").find(html)
-
-            val videoUrl = m3u8Match?.groupValues?.get(1) ?: mp4Match?.groupValues?.get(1)
-
-            if (videoUrl != null) {
-                val linkType = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8
-                               else ExtractorLinkType.VIDEO
-                callback(
-                    newExtractorLink(name, "$name Stream", videoUrl, linkType) {
-                        this.referer = embedUrl
-                        this.quality = Qualities.Unknown.value
-                    }
-                )
-                return true
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "HTML scrape failed: ${e.message}")
-        }
-
-        // Last resort: push the embed URL as-is
+        
+        // Fallback: provide raw URL to webview if needed
         callback(
-            newExtractorLink(name, "$name Direct", embedUrl, ExtractorLinkType.VIDEO) {
+            newExtractorLink(name, "$name Raw Embed", data, ExtractorLinkType.VIDEO) {
                 this.referer = mainUrl
                 this.quality = Qualities.Unknown.value
             }
