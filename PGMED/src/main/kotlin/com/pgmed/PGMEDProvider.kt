@@ -169,84 +169,91 @@ class PGMEDProvider : MainAPI() {
     ): Boolean {
         Log.d(TAG, "loadLinks data=$data")
 
-        if (data.contains("drive.google.com")) {
-            val idMatch = Regex("""(?:d/|id=)([a-zA-Z0-9_-]{20,})""").find(data)
-            val id = idMatch?.groupValues?.get(1)
-
-            if (id != null) {
-                // ── Tier 1: drive.usercontent.google.com (Google's newer direct endpoint)
-                try {
-                    val usercontent = "https://drive.usercontent.google.com/download" +
-                        "?id=$id&export=download&authuser=0&confirm=t"
-                    val response = app.get(usercontent, referer = "https://drive.google.com/")
-                    val finalUrl = response.url  // follow redirects to the real MP4
-                    if (!finalUrl.contains("accounts.google.com") &&
-                        !finalUrl.contains("drive.google.com/file")) {
-                        Log.d(TAG, "Tier-1 resolved to: $finalUrl")
-                        callback(
-                            newExtractorLink(name, "Google Drive", finalUrl, ExtractorLinkType.VIDEO) {
-                                this.referer = "https://drive.google.com/"
-                                this.quality = Qualities.Unknown.value
-                            }
-                        )
-                        return true
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Tier-1 failed: ${e.message}")
+        if (!data.contains("drive.google.com")) {
+            callback(
+                newExtractorLink(name, "$name Link", data, ExtractorLinkType.VIDEO) {
+                    this.referer = mainUrl
+                    this.quality = Qualities.Unknown.value
                 }
+            )
+            return true
+        }
 
-                // ── Tier 2: parse the viewer page for embedded stream URLs
-                try {
-                    val viewerHtml = app.get(
-                        "https://drive.google.com/file/d/$id/view",
-                        referer = "https://drive.google.com/"
-                    ).text
+        // Extract the file ID
+        val id = Regex("""(?:/d/|[?&]id=)([a-zA-Z0-9_-]{20,})""").find(data)?.groupValues?.get(1)
+        if (id == null) {
+            Log.w(TAG, "Could not extract Drive file ID from: $data")
+            return false
+        }
+        Log.d(TAG, "Drive file ID: $id")
 
-                    // Google embeds stream info as a JSON array in the page
-                    // pattern: "url":"https://...googleusercontent.com/..."
-                    val streamUrls = Regex(""""url":"(https://[^"]*googleusercontent\.com/[^"]+)"""")
-                        .findAll(viewerHtml)
-                        .map { it.groupValues[1]
-                            .replace("\\u003d", "=")
-                            .replace("\\u0026", "&")
-                            .replace("\\/", "/")
-                        }
-                        .filter { it.contains("itag") || it.contains("mime") || it.contains(".mp4") }
-                        .toList()
+        // ── Step 1: Try CloudStream's built-in extractor system
+        if (loadExtractor(data, "https://drive.google.com/", subtitleCallback, callback)) {
+            Log.d(TAG, "Built-in extractor succeeded")
+            return true
+        }
 
-                    if (streamUrls.isNotEmpty()) {
-                        streamUrls.forEachIndexed { idx, url ->
-                            Log.d(TAG, "Tier-2 stream[$idx]: $url")
-                            callback(
-                                newExtractorLink(name, "GDrive Stream ${idx + 1}", url, ExtractorLinkType.VIDEO) {
-                                    this.referer = "https://drive.google.com/"
-                                    this.quality = Qualities.Unknown.value
-                                }
-                            )
-                        }
-                        return true
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Tier-2 failed: ${e.message}")
-                }
+        // ── Step 2: Fetch the download page and extract UUID confirmation token
+        // For large files, Google returns an HTML warning page containing a UUID token.
+        // We must parse that UUID and include it in the final download URL.
+        try {
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            )
 
-                // ── Tier 3: classic uc?export=download (works for small files)
-                val fallbackUrl = "https://drive.google.com/uc?export=download&confirm=t&id=$id"
-                Log.d(TAG, "Tier-3 fallback: $fallbackUrl")
+            val pageResp = app.get(
+                "https://drive.google.com/uc?export=download&id=$id",
+                referer  = "https://drive.google.com/",
+                headers  = headers
+            )
+            val finalUrl = pageResp.url
+            val html     = pageResp.text
+
+            // If the final URL is already a direct file (no drive.google.com), use it
+            if (!finalUrl.contains("drive.google.com") &&
+                !finalUrl.contains("accounts.google.com") &&
+                finalUrl.startsWith("http")) {
+                Log.d(TAG, "Direct redirect: $finalUrl")
                 callback(
-                    newExtractorLink(name, "Google Drive (DL)", fallbackUrl, ExtractorLinkType.VIDEO) {
+                    newExtractorLink(name, "Google Drive", finalUrl, ExtractorLinkType.VIDEO) {
                         this.referer = "https://drive.google.com/"
                         this.quality = Qualities.Unknown.value
                     }
                 )
                 return true
             }
+
+            // Parse UUID from the confirmation form / link
+            //   <input type="hidden" name="uuid" value="XXXX">
+            //   OR uuid=XXXX in anchor href
+            val uuid = Regex("""name=.uuid.\s+value=.([^"'>\s]+)""").find(html)?.groupValues?.get(1)
+                ?: Regex("""[?&]uuid=([^&"'\s<>]+)""").find(html)?.groupValues?.get(1)
+                ?: Regex("""[\\"']uuid[\\"']\s*:\s*[\\"']([^"'\\]+)""").find(html)?.groupValues?.get(1)
+
+            if (uuid != null) {
+                val confirmUrl = "https://drive.usercontent.google.com/download" +
+                    "?id=$id&export=download&authuser=0&confirm=t&uuid=$uuid"
+                Log.d(TAG, "UUID confirmation URL: $confirmUrl")
+                callback(
+                    newExtractorLink(name, "Google Drive", confirmUrl, ExtractorLinkType.VIDEO) {
+                        this.referer = "https://drive.google.com/"
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+                return true
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "UUID extraction failed: ${e.message}")
         }
 
-        // Not a Drive URL — pass raw
+        // ── Step 3: usercontent.google.com without UUID (sometimes works for smaller/shared files)
+        val ucontentUrl = "https://drive.usercontent.google.com/download" +
+            "?id=$id&export=download&authuser=0&confirm=t"
+        Log.d(TAG, "Fallback usercontent URL: $ucontentUrl")
         callback(
-            newExtractorLink(name, "$name Link", data, ExtractorLinkType.VIDEO) {
-                this.referer = mainUrl
+            newExtractorLink(name, "Google Drive (Direct)", ucontentUrl, ExtractorLinkType.VIDEO) {
+                this.referer = "https://drive.google.com/"
                 this.quality = Qualities.Unknown.value
             }
         )
