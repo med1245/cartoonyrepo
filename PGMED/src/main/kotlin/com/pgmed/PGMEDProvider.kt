@@ -19,26 +19,21 @@ class PGMEDProvider : MainAPI() {
         val title: String,
         val url: String,
         val posterUrl: String,
-        val type: TvType
+        val type: TvType,
+        val plot: String? = null
     )
 
     private val catalog = mapOf(
         "Latest Movies" to listOf(
             MediaItem(
                 title = "Avatar: Fire and Ash (2025)",
-                url = "https://drive.google.com/file/d/1KzPyVgMsYv8jvcCv-saLmxmTMbrlnmLW/view?usp=drive_link",
+                url = "https://drive.google.com/file/d/1fhT2IeDtKH-Q7DETP2k_sQtHAXybOFFG/view?usp=drive_link",
                 posterUrl = "https://m.media-amazon.com/images/M/MV5BZDYxY2I1OGMtN2Y4MS00ZmU1LTgyNDAtODA0MzAyYjI0N2Y2XkEyXkFqcGc@._V1_FMjpg_UX1000_.jpg",
-                type = TvType.Movie
+                type = TvType.Movie,
+                plot = "Jake Sully and Neytiri encounter the Ash People, a hostile clan of Na'vi, as they explore deeper into the unknown regions of Pandora."
             )
         ),
-        "Trending Series" to listOf(
-            MediaItem(
-                title = "hack",
-                url = "https://drive.google.com/file/d/1KzPyVgMsYv8jvcCv-saLmxmTMbrlnmLW/view?usp=drive_link",
-                posterUrl = "https://upload.wikimedia.org/wikipedia/en/thumb/5/58/Blackhat_poster.jpg/250px-Blackhat_poster.jpg",
-                type = TvType.TvSeries
-            )
-        )
+        "Trending Series" to emptyList()
     )
 
     private val allItems get() = catalog.values.flatten()
@@ -141,13 +136,13 @@ class PGMEDProvider : MainAPI() {
                     newEpisode(item?.url ?: url) {
                         this.name = "Episode 1"
                         this.posterUrl = meta?.posterPath ?: item?.posterUrl
-                        this.description = meta?.plot
+                        this.description = meta?.plot ?: item?.plot
                     }
                 )
             ) {
                 this.posterUrl = meta?.posterPath ?: item?.posterUrl
                 this.backgroundPosterUrl = meta?.backgroundPath
-                this.plot = meta?.plot
+                this.plot = meta?.plot ?: item?.plot
                 this.year = meta?.year
             }
         } else {
@@ -159,7 +154,7 @@ class PGMEDProvider : MainAPI() {
             ) {
                 this.posterUrl = meta?.posterPath ?: item?.posterUrl
                 this.backgroundPosterUrl = meta?.backgroundPath
-                this.plot = meta?.plot
+                this.plot = meta?.plot ?: item?.plot
                 this.year = meta?.year
             }
         }
