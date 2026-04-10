@@ -178,7 +178,7 @@ class PGMEDProvider : MainAPI() {
                   
             if (id != null) {
                 // The /uc?export=download endpoint forces a direct file download 
-                val directUrl = "https://drive.google.com/uc?export=download&id=$id"
+                val directUrl = "https://drive.google.com/uc?export=download&confirm=t&id=$id"
                 
                 callback(
                     newExtractorLink(name, "Google Drive (MP4)", directUrl, ExtractorLinkType.VIDEO) {
