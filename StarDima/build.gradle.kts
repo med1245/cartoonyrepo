@@ -10,7 +10,7 @@ dependencies {
 }
 
 // Use an integer for version numbers
-version = 9
+version = 10
 
 cloudstream {
     description = "Arabic cartoons, anime, series, and movies from stardima.com"
