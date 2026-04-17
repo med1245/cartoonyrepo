@@ -186,12 +186,21 @@ class StarDima : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val q = query.trim().ifBlank { return emptyList() }
         return try {
-            val doc = app.get(
+            // Site currently uses ?query=... ; keep ?q=... fallback for older deployments.
+            val primary = app.get(
+                "$mainUrl/search",
+                params  = mapOf("query" to q),
+                headers = hdrs()
+            ).document
+            val first = parseCards(primary)
+            if (first.isNotEmpty()) return first
+
+            val fallback = app.get(
                 "$mainUrl/search",
                 params  = mapOf("q" to q),
                 headers = hdrs()
             ).document
-            parseCards(doc)
+            parseCards(fallback)
         } catch (t: Throwable) {
             Log.e("StarDima", "search: ${t.message}")
             emptyList()
@@ -530,6 +539,19 @@ class StarDima : MainAPI() {
             val iframeDoc  = iframeResp.document
             val iframeHtml = iframeResp.text
 
+            // Fast path: many pages expose the final embed URL directly (lulustream/uqload/etc).
+            // Try known extractors immediately before API dance.
+            val providerUrlRegex = Regex(
+                """https?://(?:www\.)?(?:lulustream|uqload|krakenfiles|streamhg|earnvids)[^\s"'<\\]+""",
+                RegexOption.IGNORE_CASE
+            )
+            for (m in providerUrlRegex.findAll(iframeHtml)) {
+                val providerUrl = m.value.trim()
+                if (providerUrl.startsWith("http") &&
+                    loadExtractor(providerUrl, normalizedUrl, subtitleCallback, callback)
+                ) return true
+            }
+
             // Extract CSRF token: <meta name="csrf-token" content="...">
             var csrfToken = iframeDoc
                 .selectFirst("meta[name='csrf-token'], meta[name=csrf-token]")
@@ -643,8 +665,9 @@ class StarDima : MainAPI() {
                 requestBody = body.toRequestBody(jsonMediaType)
             )
 
-            val json    = org.json.JSONObject(resp.text)
-            val success = json.optBoolean("success", false)
+            val json = org.json.JSONObject(resp.text)
+            val success = json.optBoolean("success", false) ||
+                json.optString("status").equals("completed", ignoreCase = true)
             val watchUrl = json.optString("watch_url", "").trim()
 
             Log.d("StarDima", "HW POST result success=$success watchUrl=$watchUrl")
