@@ -293,32 +293,24 @@ class StarDima : MainAPI() {
 
             val json = org.json.JSONObject(text)
             val arr  = json.optJSONArray("episodes") ?: return emptyList()
-            val usedEpisodeNumbers = mutableSetOf<Int>()
+            data class RawEpisode(val watchUrl: String, val title: String, val parsedNum: Int?, val idx: Int)
+            val numRegex = Regex("""(\d{1,4})\s*$""")
 
-            (0 until arr.length()).mapNotNull { i ->
-                val ep       = arr.getJSONObject(i)
-                val fallbackNum = i + 1
-                val epTitle  = ep.optString("title", "الحلقة $fallbackNum")
-                val watchUrl = ep.optString("watch_url", "")
+            val raw = (0 until arr.length()).mapNotNull { i ->
+                val ep = arr.getJSONObject(i)
+                val watchUrl = ep.optString("watch_url", "").trim()
                 if (watchUrl.isBlank()) return@mapNotNull null
+                val title = ep.optString("title", "الحلقة ${i + 1}").trim().ifBlank { "الحلقة ${i + 1}" }
+                val titleNum = numRegex.find(title)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                val apiNum = ep.optInt("episode_number", -1).takeIf { it > 0 }
+                RawEpisode(watchUrl, title, titleNum ?: apiNum, i)
+            }.sortedWith(compareBy<RawEpisode>({ it.parsedNum ?: Int.MAX_VALUE }, { it.idx }))
 
-                // Stardima occasionally returns the same episode_number for all items (e.g. all = 4).
-                // Derive number from title first, then enforce uniqueness to avoid Cloudstream collapsing episodes.
-                val apiNum = ep.optInt("episode_number", -1)
-                val titleNum = Regex("""(?:ep(?:isode)?|الحلقة)?\D*(\d{1,4})\s*$""", RegexOption.IGNORE_CASE)
-                    .find(epTitle)
-                    ?.groupValues?.getOrNull(1)
-                    ?.toIntOrNull()
-                var num = when {
-                    titleNum != null && titleNum > 0 -> titleNum
-                    apiNum > 0 -> apiNum
-                    else -> fallbackNum
-                }
-                while (!usedEpisodeNumbers.add(num)) num++
-
-                newEpisode(watchUrl) {
-                    name      = epTitle.ifBlank { "الحلقة $num" }
-                    episode   = num
+            raw.mapIndexed { index, ep ->
+                val displayNum = index + 1
+                newEpisode(ep.watchUrl) {
+                    name      = ep.title
+                    episode   = displayNum // keep unique/continuous numbering to avoid Cloudstream collapsing
                     season    = 1  // override per-season below when needed
                     posterUrl = showPoster
                 }
@@ -635,26 +627,26 @@ class StarDima : MainAPI() {
 
             Log.d("StarDima", "Found server IDs: $serverIds")
 
-            // If no server IDs found, try a generic first request without server_link_id
+            var found = false
+            // If no server IDs found, try a generic first request without server_link_id.
+            // Do not return early; providerCandidates fallback is handled below.
             if (serverIds.isEmpty()) {
                 // Some versions of hyperwatching return the link directly
-                val directResult = tryHyperwatchingPost(
+                found = tryHyperwatchingPost(
                     videoId, null, csrfToken, normalizedUrl, subtitleCallback, callback
                 )
-                if (directResult) return true
 
                 // Last-resort: try loadExtractor on the iframe URL directly
-                if (loadExtractor(normalizedUrl, mainUrl, subtitleCallback, callback)) return true
-                return false
+                if (!found && loadExtractor(normalizedUrl, mainUrl, subtitleCallback, callback)) found = true
             }
-
-            // Try each server ID
-            var found = false
-            for (sid in serverIds) {
-                if (found) break
-                found = tryHyperwatchingPost(
-                    videoId, sid, csrfToken, normalizedUrl, subtitleCallback, callback
-                )
+            else {
+                // Try each server ID
+                for (sid in serverIds) {
+                    if (found) break
+                    found = tryHyperwatchingPost(
+                        videoId, sid, csrfToken, normalizedUrl, subtitleCallback, callback
+                    )
+                }
             }
 
             // If still nothing, try loadExtractor on the iframe
@@ -734,19 +726,78 @@ class StarDima : MainAPI() {
 
             Log.d("StarDima", "HW watch_url: $watchUrl")
 
-            // Try loadExtractor first (handles known providers: uqload, lulustream, etc.)
-            if (loadExtractor(watchUrl, referer, subtitleCallback, callback)) return true
+            val candidates = linkedSetOf<String>()
+            fun addCandidate(url: String?) {
+                val clean = url?.trim().orEmpty()
+                if (clean.startsWith("http")) candidates.add(clean)
+            }
+            fun addDecodedParams(url: String) {
+                val query = url.substringAfter("?", "")
+                if (query.isBlank()) return
+                for (part in query.split("&")) {
+                    val valueEnc = part.substringAfter("=", "")
+                    if (valueEnc.isBlank()) continue
+                    val decoded = runCatching { java.net.URLDecoder.decode(valueEnc, "UTF-8") }.getOrNull()
+                    addCandidate(decoded)
+                }
+            }
+
+            addCandidate(watchUrl)
+            addDecodedParams(watchUrl)
+
+            // Some watch URLs wrap the real host inside query params (e.g. strema.top/?id=<lulustream-url>)
+            for (u in candidates.toList()) {
+                if (loadExtractor(u, referer, subtitleCallback, callback)) return true
+            }
+
+            // Try Hyperwatching secure extraction flow (same as website player):
+            // /api/secure/token -> /api/secure/extract
+            try {
+                val tokenResp = app.post(
+                    "$hwUrl/api/secure/token",
+                    headers = reqHeaders + mapOf("X-Requested-With" to "XMLHttpRequest"),
+                    requestBody = org.json.JSONObject().put("url", watchUrl)
+                        .toString().toRequestBody(jsonMediaType)
+                )
+                val token = org.json.JSONObject(tokenResp.text).optString("token", "").trim()
+                if (token.isNotBlank()) {
+                    val extractResp = app.post(
+                        "$hwUrl/api/secure/extract",
+                        headers = reqHeaders + mapOf("X-Requested-With" to "XMLHttpRequest"),
+                        requestBody = org.json.JSONObject().put("token", token)
+                            .toString().toRequestBody(jsonMediaType)
+                    )
+                    val extJson = org.json.JSONObject(extractResp.text)
+                    val extData = extJson.optJSONObject("data")
+                    val directFile = extData?.optString("file", "")?.trim().orEmpty()
+                    if (directFile.startsWith("http")) {
+                        if (directFile.contains(".m3u8")) {
+                            M3u8Helper.generateM3u8(name, directFile, watchUrl).forEach { callback(it) }
+                        } else {
+                            callback(ExtractorLink(name, "$name Direct", directFile, watchUrl, Qualities.Unknown.value, false))
+                        }
+                        return true
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.d("StarDima", "secure extract failed sid=$serverLinkId: ${t.message}")
+            }
 
             // Direct fetch of the watch URL for m3u8/mp4 inside
-            val watchResp = app.get(watchUrl, headers = mapOf(
-                "User-Agent" to desktopUa,
-                "Referer"    to referer
-            ))
-            val watchHtml = watchResp.text
-            val watchDoc  = watchResp.document
+            val watchResp = try {
+                app.get(watchUrl, headers = mapOf(
+                    "User-Agent" to desktopUa,
+                    "Referer"    to referer
+                ))
+            } catch (t: Throwable) {
+                Log.w("StarDima", "watchUrl fetch failed: ${t.message}")
+                null
+            }
+            val watchHtml = watchResp?.text.orEmpty()
+            val watchDoc  = watchResp?.document
 
             // video/source tags
-            for (el in watchDoc.select("video[src], source[src]")) {
+            for (el in watchDoc?.select("video[src], source[src]").orEmpty()) {
                 val src = el.attr("abs:src").trim()
                 if (!src.startsWith("http")) continue
                 if (src.contains(".m3u8")) {
@@ -759,10 +810,25 @@ class StarDima : MainAPI() {
             }
 
             // regex on HTML
-            if (tryExtractStreams(watchHtml, watchUrl, callback)) return true
+            if (watchHtml.isNotBlank() && tryExtractStreams(watchHtml, watchUrl, callback)) return true
+
+            // Harvest provider URLs from HTML and retry extractor.
+            if (watchHtml.isNotBlank()) {
+                val providerRegex = Regex(
+                    """https?://(?:www\.)?(?:lulustream|uqload|krakenfiles|streamhg|earnvids|goodstream|darkibox|strema\.top)[^\s"'<\\]+""",
+                    RegexOption.IGNORE_CASE
+                )
+                for (m in providerRegex.findAll(watchHtml)) {
+                    addCandidate(m.value)
+                    addDecodedParams(m.value)
+                }
+                for (u in candidates.toList()) {
+                    if (loadExtractor(u, watchUrl, subtitleCallback, callback)) return true
+                }
+            }
 
             // Nested iframes
-            for (iframe in watchDoc.select("iframe[src]")) {
+            for (iframe in watchDoc?.select("iframe[src]").orEmpty()) {
                 val iSrc = iframe.attr("abs:src").trim()
                 if (iSrc.isBlank() || !iSrc.startsWith("http")) continue
                 if (loadExtractor(iSrc, watchUrl, subtitleCallback, callback)) return true
@@ -772,9 +838,24 @@ class StarDima : MainAPI() {
                 } catch (_: Throwable) {}
             }
 
-            // FINAL FALLBACK: emit watch_url as a raw link so Cloudstream can open it directly.
-            // This ensures the user sees *something* even if no extractor matched.
-            Log.d("StarDima", "No extractor matched, emitting raw link: $watchUrl")
+            // FINAL FALLBACK: emit candidates as raw links so user never gets "No Links Found".
+            if (candidates.isNotEmpty()) {
+                Log.d("StarDima", "No extractor matched, emitting ${candidates.size} raw candidates")
+                for (u in candidates.take(5)) {
+                    callback(
+                        ExtractorLink(
+                            source  = name,
+                            name    = "$name Server",
+                            url     = u,
+                            referer = referer,
+                            quality = Qualities.Unknown.value,
+                            isM3u8  = u.contains(".m3u8")
+                        )
+                    )
+                }
+                return true
+            }
+
             callback(
                 ExtractorLink(
                     source  = name,
