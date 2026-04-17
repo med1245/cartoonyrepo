@@ -48,6 +48,25 @@ class StarDima : MainAPI() {
 
     private fun isMovie(url: String)  = url.contains("/movie/")
     private fun isTvShow(url: String) = url.contains("/tvshow/")
+    private fun isImageAsset(url: String) =
+        url.contains(".svg", true) || url.contains(".png", true) ||
+            url.contains(".jpg", true) || url.contains(".jpeg", true) || url.contains(".webp", true)
+
+    private fun isPlayableCandidate(url: String): Boolean {
+        if (!url.startsWith("http")) return false
+        if (isImageAsset(url)) return false
+        // Only accept direct media files as raw fallback candidates.
+        if (url.contains(".m3u8", true) || url.contains(".mp4", true)) return true
+        return false
+    }
+
+    private fun isExtractorHost(url: String): Boolean {
+        if (!url.startsWith("http")) return false
+        return Regex(
+            """https?://(?:www\.)?(?:lulustream|uqload|krakenfiles|streamhg|earnvids|goodstream|darkibox)[^/\s]*""",
+            RegexOption.IGNORE_CASE
+        ).containsMatchIn(url)
+    }
 
     private fun normalizeContentUrl(rawUrl: String): String {
         var url = rawUrl.substringBefore("#").substringBefore("?").trim().trimEnd('/')
@@ -557,6 +576,8 @@ class StarDima : MainAPI() {
             val iframeDoc  = iframeResp.document
             val iframeHtml = iframeResp.text
 
+            var found = false
+
             // Fast path: many pages expose the final embed URL directly (lulustream/uqload/etc).
             // Try known extractors immediately before API dance.
             val providerCandidates = mutableSetOf<String>()
@@ -566,11 +587,12 @@ class StarDima : MainAPI() {
             )
             for (m in providerUrlRegex.findAll(iframeHtml)) {
                 val providerUrl = m.value.trim()
-                if (providerUrl.contains(".svg") || providerUrl.contains(".png") || providerUrl.contains(".jpg")) continue
+                if (isImageAsset(providerUrl)) continue
                 if (providerUrl.startsWith("http")) providerCandidates.add(providerUrl)
                 if (providerUrl.startsWith("http") &&
+                    isExtractorHost(providerUrl) &&
                     loadExtractor(providerUrl, normalizedUrl, subtitleCallback, callback)
-                ) return true
+                ) found = true
             }
             // Some pages hardcode the default embed directly in startPlayback().
             val launchIframeRegex = Regex("""launchIframe\(\s*["'](https?://[^"']+)["']\s*\)""")
@@ -578,8 +600,9 @@ class StarDima : MainAPI() {
                 val embeddedUrl = m.groupValues[1].trim()
                 if (embeddedUrl.startsWith("http")) providerCandidates.add(embeddedUrl)
                 if (embeddedUrl.startsWith("http") &&
+                    isExtractorHost(embeddedUrl) &&
                     loadExtractor(embeddedUrl, normalizedUrl, subtitleCallback, callback)
-                ) return true
+                ) found = true
             }
 
             // Extract CSRF token: <meta name="csrf-token" content="...">
@@ -630,25 +653,24 @@ class StarDima : MainAPI() {
 
             Log.d("StarDima", "Found server IDs: $serverIds")
 
-            var found = false
             // If no server IDs found, try a generic first request without server_link_id.
             // Do not return early; providerCandidates fallback is handled below.
             if (serverIds.isEmpty()) {
                 // Some versions of hyperwatching return the link directly
                 found = tryHyperwatchingPost(
                     videoId, null, csrfToken, normalizedUrl, subtitleCallback, callback
-                )
+                ) || found
 
                 // Last-resort: try loadExtractor on the iframe URL directly
                 if (!found && loadExtractor(normalizedUrl, mainUrl, subtitleCallback, callback)) found = true
             }
             else {
-                // Try each server ID
+                // Try each server ID and keep all successful sources (don't stop on first success).
                 for (sid in serverIds) {
-                    if (found) break
-                    found = tryHyperwatchingPost(
+                    val sidFound = tryHyperwatchingPost(
                         videoId, sid, csrfToken, normalizedUrl, subtitleCallback, callback
                     )
+                    if (sidFound) found = true
                 }
             }
 
@@ -660,16 +682,8 @@ class StarDima : MainAPI() {
             // Final fallback: expose embedded provider links so user never gets "No links found".
             if (!found && providerCandidates.isNotEmpty()) {
                 for (u in providerCandidates.take(5)) {
-                    callback(
-                        ExtractorLink(
-                            source = name,
-                            name = "$name Server",
-                            url = u,
-                            referer = normalizedUrl,
-                            quality = Qualities.Unknown.value,
-                            isM3u8 = u.contains(".m3u8")
-                        )
-                    )
+                    if (!isPlayableCandidate(u)) continue
+                    callback(ExtractorLink(name, "$name Direct", u, normalizedUrl, Qualities.Unknown.value, u.contains(".m3u8")))
                 }
                 found = true
             }
@@ -732,7 +746,7 @@ class StarDima : MainAPI() {
             val candidates = linkedSetOf<String>()
             fun addCandidate(url: String?) {
                 val clean = url?.trim().orEmpty()
-                if (clean.startsWith("http")) candidates.add(clean)
+                if (isPlayableCandidate(clean)) candidates.add(clean)
             }
             fun addDecodedParams(url: String) {
                 val query = url.substringAfter("?", "")
@@ -750,9 +764,11 @@ class StarDima : MainAPI() {
 
             // Some watch URLs wrap the real host inside query params (e.g. strema.top/?id=<lulustream-url>)
             for (u in candidates.toList()) {
-                if (loadExtractor(u, watchUrl, subtitleCallback, callback)) return true
-                if (loadExtractor(u, referer, subtitleCallback, callback)) return true
-                if (loadExtractor(u, mainUrl, subtitleCallback, callback)) return true
+                if (isExtractorHost(u)) {
+                    if (loadExtractor(u, watchUrl, subtitleCallback, callback)) return true
+                    if (loadExtractor(u, referer, subtitleCallback, callback)) return true
+                    if (loadExtractor(u, mainUrl, subtitleCallback, callback)) return true
+                }
             }
 
             // Try Hyperwatching secure extraction flow (same as website player):
@@ -828,7 +844,7 @@ class StarDima : MainAPI() {
                     addDecodedParams(m.value)
                 }
                 for (u in candidates.toList()) {
-                    if (u.contains(".svg") || u.contains(".png") || u.contains(".jpg")) continue
+                    if (!isExtractorHost(u)) continue
                     if (loadExtractor(u, watchUrl, subtitleCallback, callback)) return true
                     if (loadExtractor(u, referer, subtitleCallback, callback)) return true
                 }
@@ -849,7 +865,7 @@ class StarDima : MainAPI() {
             if (candidates.isNotEmpty()) {
                 Log.d("StarDima", "No extractor matched, emitting ${candidates.size} raw candidates")
                 for (u in candidates.take(5)) {
-                    if (u.contains(".svg") || u.contains(".png") || u.contains(".jpg")) continue
+                    if (!isPlayableCandidate(u)) continue
                     val type = if (u.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                     callback(newExtractorLink(name, "$name Server", u, type) {
                         this.referer = watchUrl
@@ -863,17 +879,8 @@ class StarDima : MainAPI() {
                 return true
             }
 
-            callback(
-                ExtractorLink(
-                    source  = name,
-                    name    = "$name Server",
-                    url     = watchUrl,
-                    referer = referer,
-                    quality = Qualities.Unknown.value,
-                    isM3u8  = watchUrl.contains(".m3u8")
-                )
-            )
-            true
+            // Avoid emitting wrapper/non-playable URLs that can freeze or crash some players.
+            false
         } catch (t: Throwable) {
             Log.e("StarDima", "tryHyperwatchingPost sid=$serverLinkId: ${t.message}")
             false
