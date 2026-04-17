@@ -5,9 +5,11 @@ package com.stardima
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.jsoup.nodes.Document
@@ -564,6 +566,7 @@ class StarDima : MainAPI() {
             )
             for (m in providerUrlRegex.findAll(iframeHtml)) {
                 val providerUrl = m.value.trim()
+                if (providerUrl.contains(".svg") || providerUrl.contains(".png") || providerUrl.contains(".jpg")) continue
                 if (providerUrl.startsWith("http")) providerCandidates.add(providerUrl)
                 if (providerUrl.startsWith("http") &&
                     loadExtractor(providerUrl, normalizedUrl, subtitleCallback, callback)
@@ -747,7 +750,9 @@ class StarDima : MainAPI() {
 
             // Some watch URLs wrap the real host inside query params (e.g. strema.top/?id=<lulustream-url>)
             for (u in candidates.toList()) {
+                if (loadExtractor(u, watchUrl, subtitleCallback, callback)) return true
                 if (loadExtractor(u, referer, subtitleCallback, callback)) return true
+                if (loadExtractor(u, mainUrl, subtitleCallback, callback)) return true
             }
 
             // Try Hyperwatching secure extraction flow (same as website player):
@@ -823,7 +828,9 @@ class StarDima : MainAPI() {
                     addDecodedParams(m.value)
                 }
                 for (u in candidates.toList()) {
+                    if (u.contains(".svg") || u.contains(".png") || u.contains(".jpg")) continue
                     if (loadExtractor(u, watchUrl, subtitleCallback, callback)) return true
+                    if (loadExtractor(u, referer, subtitleCallback, callback)) return true
                 }
             }
 
@@ -842,16 +849,16 @@ class StarDima : MainAPI() {
             if (candidates.isNotEmpty()) {
                 Log.d("StarDima", "No extractor matched, emitting ${candidates.size} raw candidates")
                 for (u in candidates.take(5)) {
-                    callback(
-                        ExtractorLink(
-                            source  = name,
-                            name    = "$name Server",
-                            url     = u,
-                            referer = referer,
-                            quality = Qualities.Unknown.value,
-                            isM3u8  = u.contains(".m3u8")
+                    if (u.contains(".svg") || u.contains(".png") || u.contains(".jpg")) continue
+                    val type = if (u.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    callback(newExtractorLink(name, "$name Server", u, type) {
+                        this.referer = watchUrl
+                        this.quality = Qualities.Unknown.value
+                        this.headers = mapOf(
+                            "User-Agent" to desktopUa,
+                            "Referer" to watchUrl
                         )
-                    )
+                    })
                 }
                 return true
             }
