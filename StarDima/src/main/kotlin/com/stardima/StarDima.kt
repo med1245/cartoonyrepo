@@ -47,6 +47,15 @@ class StarDima : MainAPI() {
     private fun isMovie(url: String)  = url.contains("/movie/")
     private fun isTvShow(url: String) = url.contains("/tvshow/")
 
+    private fun normalizeContentUrl(rawUrl: String): String {
+        var url = rawUrl.substringBefore("#").substringBefore("?").trim().trimEnd('/')
+        // Search pages often expose episode/play links; normalize back to the parent show/movie page.
+        if ((url.contains("/tvshow/") || url.contains("/movie/")) && url.contains("/play/")) {
+            url = url.substringBefore("/play/").trimEnd('/')
+        }
+        return url
+    }
+
     /** Safe og:title, never returns login/modal text */
     private fun pageTitle(doc: Document): String {
         val og = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
@@ -74,10 +83,9 @@ class StarDima : MainAPI() {
         val seen    = mutableSetOf<String>()
 
         for (a in doc.select("a[href]")) {
-            val href = a.attr("abs:href").trim()
+            val href = normalizeContentUrl(a.attr("abs:href"))
             if (href.isBlank() || !href.startsWith(mainUrl)) continue
             if (!isTvShow(href) && !isMovie(href)) continue
-            if (href.contains("/play/"))            continue
             if (!seen.add(href))                    continue
 
             var title : String? = null
@@ -285,13 +293,29 @@ class StarDima : MainAPI() {
 
             val json = org.json.JSONObject(text)
             val arr  = json.optJSONArray("episodes") ?: return emptyList()
+            val usedEpisodeNumbers = mutableSetOf<Int>()
 
             (0 until arr.length()).mapNotNull { i ->
                 val ep       = arr.getJSONObject(i)
-                val num      = ep.optInt("episode_number", i + 1)
-                val epTitle  = ep.optString("title", "الحلقة $num")
+                val fallbackNum = i + 1
+                val epTitle  = ep.optString("title", "الحلقة $fallbackNum")
                 val watchUrl = ep.optString("watch_url", "")
                 if (watchUrl.isBlank()) return@mapNotNull null
+
+                // Stardima occasionally returns the same episode_number for all items (e.g. all = 4).
+                // Derive number from title first, then enforce uniqueness to avoid Cloudstream collapsing episodes.
+                val apiNum = ep.optInt("episode_number", -1)
+                val titleNum = Regex("""(?:ep(?:isode)?|الحلقة)?\D*(\d{1,4})\s*$""", RegexOption.IGNORE_CASE)
+                    .find(epTitle)
+                    ?.groupValues?.getOrNull(1)
+                    ?.toIntOrNull()
+                var num = when {
+                    titleNum != null && titleNum > 0 -> titleNum
+                    apiNum > 0 -> apiNum
+                    else -> fallbackNum
+                }
+                while (!usedEpisodeNumbers.add(num)) num++
+
                 newEpisode(watchUrl) {
                     name      = epTitle.ifBlank { "الحلقة $num" }
                     episode   = num
@@ -541,14 +565,25 @@ class StarDima : MainAPI() {
 
             // Fast path: many pages expose the final embed URL directly (lulustream/uqload/etc).
             // Try known extractors immediately before API dance.
+            val providerCandidates = mutableSetOf<String>()
             val providerUrlRegex = Regex(
-                """https?://(?:www\.)?(?:lulustream|uqload|krakenfiles|streamhg|earnvids)[^\s"'<\\]+""",
+                """https?://(?:www\.)?(?:lulustream|uqload|krakenfiles|streamhg|earnvids|goodstream|darkibox)[^\s"'<\\]+""",
                 RegexOption.IGNORE_CASE
             )
             for (m in providerUrlRegex.findAll(iframeHtml)) {
                 val providerUrl = m.value.trim()
+                if (providerUrl.startsWith("http")) providerCandidates.add(providerUrl)
                 if (providerUrl.startsWith("http") &&
                     loadExtractor(providerUrl, normalizedUrl, subtitleCallback, callback)
+                ) return true
+            }
+            // Some pages hardcode the default embed directly in startPlayback().
+            val launchIframeRegex = Regex("""launchIframe\(\s*["'](https?://[^"']+)["']\s*\)""")
+            for (m in launchIframeRegex.findAll(iframeHtml)) {
+                val embeddedUrl = m.groupValues[1].trim()
+                if (embeddedUrl.startsWith("http")) providerCandidates.add(embeddedUrl)
+                if (embeddedUrl.startsWith("http") &&
+                    loadExtractor(embeddedUrl, normalizedUrl, subtitleCallback, callback)
                 ) return true
             }
 
@@ -586,6 +621,12 @@ class StarDima : MainAPI() {
                 serverIds.add(m.groupValues[1])
             }
 
+            // Pattern 2b: JS config.servers IDs, e.g. { id: "319472", name: "Uqload" }
+            val configServerIdRegex = Regex("""\bid\s*:\s*["'](\d{3,10})["']""")
+            for (m in configServerIdRegex.findAll(iframeHtml)) {
+                serverIds.add(m.groupValues[1])
+            }
+
             // Pattern 3: look for buttons/divs with link IDs (common pattern: <li data-id="535176">)
             for (el in iframeDoc.select("li[data-id], div[data-id], button[data-id], a[data-id]")) {
                 val sid = el.attr("data-id").trim()
@@ -619,6 +660,23 @@ class StarDima : MainAPI() {
             // If still nothing, try loadExtractor on the iframe
             if (!found) {
                 found = loadExtractor(normalizedUrl, mainUrl, subtitleCallback, callback)
+            }
+
+            // Final fallback: expose embedded provider links so user never gets "No links found".
+            if (!found && providerCandidates.isNotEmpty()) {
+                for (u in providerCandidates.take(5)) {
+                    callback(
+                        ExtractorLink(
+                            source = name,
+                            name = "$name Server",
+                            url = u,
+                            referer = normalizedUrl,
+                            quality = Qualities.Unknown.value,
+                            isM3u8 = u.contains(".m3u8")
+                        )
+                    )
+                }
+                found = true
             }
 
             found
