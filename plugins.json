@@ -1,0 +1,245 @@
+[
+  {
+    "iconUrl": "https://www.arabic-toons.com/images/logo.png",
+    "fileHash": "sha256-ccf1d16c43000530d44d2af138586732cc48ca76561111e984c3d9f1d6cec7d8",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/med1245/cartoonyrepo",
+    "fileSize": 24437,
+    "status": 1,
+    "language": "ar",
+    "authors": [
+      "Mehdi Marsaman"
+    ],
+    "tvTypes": [
+      "TvSeries",
+      "Anime",
+      "Movie"
+    ],
+    "version": 1,
+    "internalName": "ArabicToons",
+    "description": "Arabic cartoons, anime, series, and movies from arabic-toons.com",
+    "url": "https://raw.githubusercontent.com/med1245/cartoonyrepo/builds/ArabicToons-v1.cs3",
+    "name": "ArabicToons"
+  },
+  {
+    "iconUrl": "https://carateen.tv/favicon.ico",
+    "fileHash": "sha256-8aa044747ffd7989aff2e7c13ec02c0250df391a8786a7acc347d06bf7eafd79",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/med1245/cartoonyrepo",
+    "fileSize": 32472,
+    "status": 1,
+    "language": "ar",
+    "authors": [
+      "Mehdi Marsaman"
+    ],
+    "tvTypes": [
+      "TvSeries",
+      "Anime",
+      "Movie"
+    ],
+    "version": 1,
+    "internalName": "Carateen",
+    "description": "Anime, series and movies from carateen.tv — large Arabic anime library",
+    "url": "https://raw.githubusercontent.com/med1245/cartoonyrepo/builds/Carateen-v1.cs3",
+    "name": "Carateen"
+  },
+  {
+    "iconUrl": "https://upload.wikimedia.org/wikipedia/commons/2/2f/Korduene_Logo.png",
+    "fileHash": "sha256-f9687941a3c7e23c29af3c7a9ba485efb3edda82b018a60c57650bdc3353aaa9",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/med1245/cartoonyrepo",
+    "fileSize": 42389,
+    "status": 1,
+    "language": "ar",
+    "authors": [
+      "Mehdi Marsaman"
+    ],
+    "tvTypes": [
+      "TvSeries",
+      "Anime",
+      "Movie"
+    ],
+    "version": 14,
+    "internalName": "Cartoony",
+    "description": "Arabic cartoons, anime, series, and movies from cartoony.net",
+    "url": "https://raw.githubusercontent.com/med1245/cartoonyrepo/builds/Cartoony-v14.cs3",
+    "name": "Cartoony"
+  },
+  {
+    "iconUrl": "https://conanaraby.com/wp-content/uploads/2023/05/cropped-favicon-192x192.png",
+    "fileHash": "sha256-0bf25651be65729d9a86cd169d35c3f914d37d9469bad69442b1aba8aabf66a1",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/med1245/cartoonyrepo",
+    "fileSize": 20412,
+    "status": 1,
+    "language": "ar",
+    "authors": [
+      "Mehdi Marsaman"
+    ],
+    "tvTypes": [
+      "TvSeries",
+      "Anime",
+      "Movie"
+    ],
+    "version": 1,
+    "internalName": "ConanAraby",
+    "description": "كونان بالعربي - Detective Conan episodes and movies in Arabic from conanaraby.com",
+    "url": "https://raw.githubusercontent.com/med1245/cartoonyrepo/builds/ConanAraby-v1.cs3",
+    "name": "ConanAraby"
+  },
+  {
+    "iconUrl": "https://raw.githubusercontent.com/med1245/cartoonyrepo/master/CleanWatch/src/main/res/drawable/cleanwatch_icon.png",
+    "fileHash": "sha256-9edc3c6d55971a6c40d544feedbf3fea45d14e8e5c18d6c8acfbc0a69bbd56ad",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/med1245/cartoonyrepo",
+    "fileSize": 17193,
+    "status": 1,
+    "language": "ar",
+    "authors": [
+      "Mehdi Marsaman"
+    ],
+    "tvTypes": [
+      "Movie",
+      "TvSeries",
+      "Anime",
+      "Live"
+    ],
+    "version": 1,
+    "internalName": "DriveM3UProvider",
+    "description": "Your personal CleanWatch library — Movies, TV Shows & Channels from GitHub M3U with Doodstream",
+    "url": "https://raw.githubusercontent.com/med1245/cartoonyrepo/builds/DriveM3UProvider-v1.cs3",
+    "name": "DriveM3UProvider"
+  },
+  {
+    "iconUrl": "https://egibest.org/wp-content/uploads/2026/02/egybest_logo2-2.png",
+    "fileHash": "sha256-625a2f65afad54b1d1a97b701af2d1ddea759a4747a4825cbead1e881b4f3325",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/med1245/cartoonyrepo",
+    "fileSize": 18391,
+    "status": 1,
+    "language": "ar",
+    "authors": [
+      "Mehdi Marsaman"
+    ],
+    "tvTypes": [
+      "Movie",
+      "TvSeries",
+      "Anime"
+    ],
+    "version": 5,
+    "internalName": "Egibest",
+    "description": "Movies, series and anime from egibest.org",
+    "url": "https://raw.githubusercontent.com/med1245/cartoonyrepo/builds/Egibest-v5.cs3",
+    "name": "Egibest"
+  },
+  {
+    "iconUrl": "https://www.google.com/s2/favicons?domain=faselhdx.bid&sz=%size%",
+    "fileHash": "sha256-c50a77c8e9ee3ef118fc9158d7706601d7fb2ae8c4bd225386bb48ef2c795253",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/med1245/cartoonyrepo",
+    "fileSize": 20872,
+    "status": 1,
+    "language": "ar",
+    "authors": [
+      "Mehdi Marsaman"
+    ],
+    "tvTypes": [
+      "TvSeries",
+      "Movie",
+      "Anime",
+      "AsianDrama"
+    ],
+    "version": 22,
+    "internalName": "FaselHDX",
+    "description": "Arabic movies, series, anime and dramas from FaselHD (faselhdx.bid)",
+    "url": "https://raw.githubusercontent.com/med1245/cartoonyrepo/builds/FaselHDX-v22.cs3",
+    "name": "FaselHDX"
+  },
+  {
+    "iconUrl": "https://drive.google.com/thumbnail?id=1fhT2IeDtKH-Q7DETP2k_sQtHAXybOFFG&sz=s1000",
+    "fileHash": "sha256-67ff83df92d08fbf0621452f08caade18d7ade7c3b91dfefde519a5aac73ae56",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/med1245/cartoonyrepo",
+    "fileSize": 27885,
+    "status": 1,
+    "language": "ar",
+    "authors": [
+      "Mehdi Marsaman"
+    ],
+    "tvTypes": [
+      "Movie",
+      "TvSeries"
+    ],
+    "version": 11,
+    "internalName": "PGMED",
+    "description": "PGMED — Your personal video library hosted on Google Drive",
+    "url": "https://raw.githubusercontent.com/med1245/cartoonyrepo/builds/PGMED-v11.cs3",
+    "name": "PGMED"
+  },
+  {
+    "iconUrl": "https://www.google.com/s2/favicons?domain=shahid4u.casa&sz=%size%",
+    "fileHash": "sha256-1b726d2c42f900853ed4abb80d8a98cca27a3524e36fb97888627975348d2540",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/med1245/cartoonyrepo",
+    "fileSize": 34364,
+    "status": 1,
+    "language": "ar",
+    "authors": [
+      "Mehdi Marsaman"
+    ],
+    "tvTypes": [
+      "Movie",
+      "TvSeries",
+      "Anime"
+    ],
+    "version": 8,
+    "internalName": "Shahid4u",
+    "description": "شاهد فور يو - مسلسلات وأفلام من shahid4u.casa",
+    "url": "https://raw.githubusercontent.com/med1245/cartoonyrepo/builds/Shahid4u-v8.cs3",
+    "name": "Shahid4u"
+  },
+  {
+    "iconUrl": "https://www.stardima.com/favicon.ico",
+    "fileHash": "sha256-9ea628e6d2e503190a357af6f3091d48db756a9f86a1d72188b85674ba6ba7db",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/med1245/cartoonyrepo",
+    "fileSize": 51021,
+    "status": 1,
+    "language": "ar",
+    "authors": [
+      "Mehdi Marsaman"
+    ],
+    "tvTypes": [
+      "TvSeries",
+      "Anime",
+      "Movie"
+    ],
+    "version": 10,
+    "internalName": "StarDima",
+    "description": "Arabic cartoons, anime, series, and movies from stardima.com",
+    "url": "https://raw.githubusercontent.com/med1245/cartoonyrepo/builds/StarDima-v10.cs3",
+    "name": "StarDima"
+  },
+  {
+    "iconUrl": "https://web.topcinema.io/wp-content/uploads/2023/05/cropped-icon-32x32.png",
+    "fileHash": "sha256-f7d68ba16e0ffb578cfa948bcd978df30c17e557623f67bc1c18a9d2a4fa58bd",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/med1245/cartoonyrepo",
+    "fileSize": 45867,
+    "status": 1,
+    "language": "ar",
+    "authors": [
+      "Mehdi Marsaman"
+    ],
+    "tvTypes": [
+      "Movie",
+      "TvSeries",
+      "Anime"
+    ],
+    "version": 2,
+    "internalName": "Topcima",
+    "description": "Movies and series from web.topcinema.io (Topcima)",
+    "url": "https://raw.githubusercontent.com/med1245/cartoonyrepo/builds/Topcima-v2.cs3",
+    "name": "Topcima"
+  }
+]
