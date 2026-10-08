@@ -251,14 +251,18 @@ class Shahid4u : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         val document = httpGet(url)
 
-        val title = document.selectFirst("span.title, h1.title")?.text()?.trim()
+        val title = document.selectFirst("span.title, h1.title, h1, .poster-side h1, .movie-title, h2.title, h2")?.text()?.trim()
             ?: document.selectFirst("meta[property='og:title']")?.attr("content")
+                ?.replace("- Shahid4u", "", ignoreCase = true)
+                ?.replace("- شاهد فور يو", "", ignoreCase = true)?.trim()
+            ?: document.selectFirst("title")?.text()
                 ?.replace("- Shahid4u", "", ignoreCase = true)
                 ?.replace("- شاهد فور يو", "", ignoreCase = true)?.trim()
             ?: "غير متوفر"
 
-        val poster = document.selectFirst("div.poster-side img")?.attr("src")
+        val posterRaw = document.selectFirst("div.poster-side img")?.attr("src")
             ?: document.selectFirst("div.poster img")?.attr("src")
+            ?: document.selectFirst("img[alt*=poster], img.poster")?.attr("src")
             ?: run {
                 val posterStyle = document.selectFirst("div.poster-side div.poster, div.poster")?.attr("style").orEmpty()
                 Regex("""--background-image-url:\s*url\(['"]?(.*?)['"]?\)""")
@@ -266,8 +270,12 @@ class Shahid4u : MainAPI() {
                     ?: Regex("""url\(['"]?(.*?)['"]?\)""").find(posterStyle)?.groupValues?.get(1)
             }
             ?: document.selectFirst("meta[property='og:image']")?.attr("content")
+            ?: document.selectFirst("meta[name='twitter:image']")?.attr("content")
+        val poster = makeAbsoluteUrl(posterRaw)
 
-        val plot = document.selectFirst("span.description, .description, .entry-content p, .story-content")?.text()?.trim()
+        val plot = document.selectFirst("span.description, .description, .entry-content p, .story-content, div.story, .movie-story p, p.plot, .summary")?.text()?.trim()
+            ?: document.selectFirst("meta[name='description']")?.attr("content")?.trim()
+            ?: document.selectFirst("meta[property='og:description']")?.attr("content")?.trim()
         val tags = document.select("div.qualities span.q-tag a, a[href*=/category/], a[href*=/genre/]").map { it.text().trim() }.filter { it.isNotBlank() }
 
         val isAnime = url.contains("انمي") || title.contains("انمي") ||
@@ -346,21 +354,11 @@ class Shahid4u : MainAPI() {
             .replace("/season/", "/watch/")
 
         val embedUrls = linkedSetOf<String>()
-        val browserHeaders = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36",
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language" to "en-US,en;q=0.9",
-            "Upgrade-Insecure-Requests" to "1"
-        )
         try {
-            val watchResponse = app.get(
-                watchUrl,
-                headers = browserHeaders,
-                interceptor = cfInterceptor
-            )
-            val htmlContent = watchResponse.text
+            val watchDoc = httpGet(watchUrl, referer = data)
+            val htmlContent = watchDoc.outerHtml()
             embedUrls.addAll(parseEmbedUrls(htmlContent))
-            watchResponse.document.select("iframe[src]").forEach { iframe ->
+            watchDoc.select("iframe[src]").forEach { iframe ->
                 val src = iframe.absUrl("src").ifBlank { iframe.attr("src") }
                 if (src.isNotBlank()) embedUrls.add(src)
             }
@@ -370,19 +368,11 @@ class Shahid4u : MainAPI() {
         try {
             val downloadUrl = watchUrl.replace("/watch/", "/download/")
             if (downloadUrl != watchUrl) {
-                val dlResponse = app.get(
-                    downloadUrl,
-                    headers = browserHeaders + ("Referer" to watchUrl),
-                    interceptor = cfInterceptor
-                )
-                if (dlResponse.isSuccessful) {
-                    dlResponse.document.select("a.btn-down[href], a[href*='/d/']").forEach { a ->
-                        val href = a.absUrl("href").ifBlank { a.attr("href") }
-                        val link = makeAbsoluteUrl(href)
-                        if (!link.isNullOrBlank()) embedUrls.add(link)
-                    }
-                } else {
-                    Log.w(logTag, "download page $downloadUrl returned code ${dlResponse.code}")
+                val dlDoc = httpGet(downloadUrl, referer = watchUrl)
+                dlDoc.select("a.btn-down[href], a[href*='/d/']").forEach { a ->
+                    val href = a.absUrl("href").ifBlank { a.attr("href") }
+                    val link = makeAbsoluteUrl(href)
+                    if (!link.isNullOrBlank()) embedUrls.add(link)
                 }
             }
         } catch (e: Exception) {
