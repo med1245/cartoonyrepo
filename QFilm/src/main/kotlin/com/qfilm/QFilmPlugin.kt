@@ -1,14 +1,12 @@
-package com.shahid4u
+package com.qfilm
 
 import android.content.Context
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 
 @CloudstreamPlugin
-class Shahid4uPlugin : Plugin() {
+class QFilmPlugin : Plugin() {
     override fun load(context: Context) {
-        registerMainAPI(Shahid4u())
-        registerExtractorAPI(ExternalEarnVidsExtractor())
-        registerExtractorAPI(ExternalFastVedExtractor())
+        registerMainAPI(QFilm())
     }
 }
