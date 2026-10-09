@@ -24,6 +24,11 @@ class QFilm : MainAPI() {
     override val usesWebView = true
 
     private val logTag = "QFilmProvider"
+    
+    init {
+        Log.e(logTag, "🚀🚀🚀 QFilm PLUGIN INITIALIZED 🚀🚀🚀")
+        println("🚀🚀🚀 QFilm PLUGIN INITIALIZED 🚀🚀🚀")
+    }
 
     private val TRANSPARENT_PNG_DATA_URI =
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg=="
@@ -229,15 +234,17 @@ class QFilm : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        println("!!! QFilm LOAD START: $url")
-        Log.d(logTag, "=== LOAD FUNCTION CALLED ===")
-        Log.d(logTag, "Loading URL: $url")
+        Log.e(logTag, "🔴🔴🔴 LOAD CALLED FOR: $url 🔴🔴🔴")
+        println("🔴🔴🔴 LOAD CALLED FOR: $url 🔴🔴🔴")
         
         val doc = try {
+            Log.d(logTag, "Fetching page...")
+            println("Fetching page...")
             app.get(url, referer = "$mainUrl/").document
         } catch (e: Exception) {
-            Log.e(logTag, "ERROR fetching page in load(): ${e.message}", e)
-            println("!!! QFilm LOAD ERROR: ${e.message}")
+            Log.e(logTag, "❌ ERROR fetching page in load(): ${e.message}", e)
+            println("❌ QFilm LOAD ERROR: ${e.message}")
+            e.printStackTrace()
             throw e
         }
 
@@ -549,13 +556,13 @@ class QFilm : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("!!! QFilm LOADLINKS START: $data")
-        Log.d(logTag, "=== loadLinks START ===")
-        Log.d(logTag, "Input data URL: $data")
+        Log.e(logTag, "🟢🟢🟢 LOADLINKS CALLED FOR: $data 🟢🟢🟢")
+        println("🟢🟢🟢 LOADLINKS CALLED FOR: $data 🟢🟢🟢")
         
         // Add THREE test links to ensure callback is working
         try {
-            println("!!! Adding TEST LINK 1")
+            Log.e(logTag, "Adding TEST LINK 1")
+            println("🔴 Adding TEST LINK 1")
             callback(
                 ExtractorLink(
                     "QFilm-TEST-1",
