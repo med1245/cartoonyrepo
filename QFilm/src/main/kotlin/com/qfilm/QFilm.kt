@@ -5,8 +5,13 @@ package com.qfilm
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
+import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.M3u8Helper
+import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.nicehttp.requestCreator
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
 import okhttp3.Interceptor
@@ -26,15 +31,22 @@ class QFilm : MainAPI() {
         "$mainUrl/newvideos.php?page=" to "جديد الموقع",
     )
 
+    private fun buildHeaders(referer: String = "$mainUrl/"): Map<String, String> {
+        return mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language" to "ar,en;q=0.9",
+            "Cache-Control" to "no-cache",
+            "Referer" to referer
+        )
+    }
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = request.data + page
-        val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        )
         val doc = app.get(
             url, 
             referer = "$mainUrl/",
-            headers = headers,
+            headers = buildHeaders(),
             interceptor = cfInterceptor,
             timeout = 30
         ).document
@@ -54,13 +66,10 @@ class QFilm : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val url = "$mainUrl/search.php?keywords=${URLEncoder.encode(query, "UTF-8")}"
-        val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        )
         val doc = app.get(
             url, 
             referer = "$mainUrl/",
-            headers = headers,
+            headers = buildHeaders(),
             interceptor = cfInterceptor,
             timeout = 30
         ).document
@@ -75,20 +84,10 @@ class QFilm : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        Log.e("QFilmProvider", "🔴 LOAD CALLED: $url")
-        println("🔴 LOAD: $url")
-        
-        val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language" to "ar,en;q=0.9",
-            "Cache-Control" to "no-cache"
-        )
-        
         val doc = app.get(
             url, 
             referer = "$mainUrl/",
-            headers = headers,
+            headers = buildHeaders(),
             interceptor = cfInterceptor,
             timeout = 30
         ).document
@@ -109,41 +108,33 @@ class QFilm : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.e("QFilmProvider", "🟢 LOADLINKS CALLED: $data")
-        println("🟢 LOADLINKS: $data")
+        Log.d("QFilm", "loadLinks: $data")
         
         try {
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            )
-            
+            // Try direct HTTP parsing first for embedded players
             val doc = app.get(
-                data, 
+                data,
                 referer = "$mainUrl/",
-                headers = headers,
+                headers = buildHeaders(),
                 interceptor = cfInterceptor,
                 timeout = 30
             ).document
             
-            var foundCount = 0
-            val html = doc.outerHtml()
-            
-            // Debug: Log HTML to find video links
-            Log.d("QFilmProvider", "Page HTML length: ${html.length}")
-            
-            // Strategy 1: Look for direct video URLs in JavaScript
+            // Look for direct video URLs in page HTML
             val mp4Regex = Regex("""(https?://[^\s"'<>]+\.mp4[^\s"'<>]*)""")
             val m3u8Regex = Regex("""(https?://[^\s"'<>]+\.m3u8[^\s"'<>]*)""")
+            val html = doc.outerHtml()
+            
+            var foundCount = 0
             
             mp4Regex.findAll(html).forEach { match ->
                 val url = match.groupValues[1]
-                if (url.isNotBlank()) {
-                    Log.d("QFilmProvider", "Found MP4: $url")
+                if (url.isNotBlank() && !url.contains("data:")) {
+                    Log.d("QFilm", "Found direct MP4: $url")
                     callback(
                         ExtractorLink(
                             "QFilm",
-                            "مباشر (MP4)",
+                            "مباشر",
                             url,
                             data,
                             Qualities.Unknown.value,
@@ -155,83 +146,141 @@ class QFilm : MainAPI() {
                 }
             }
             
-            m3u8Regex.findAll(html).forEach { match ->
+            for (match in m3u8Regex.findAll(html)) {
                 val url = match.groupValues[1]
-                if (url.isNotBlank()) {
-                    Log.d("QFilmProvider", "Found M3U8: $url")
-                    callback(
-                        ExtractorLink(
-                            "QFilm",
-                            "مباشر (HLS)",
-                            url,
-                            data,
-                            Qualities.Unknown.value,
-                            false,
-                            headers = mapOf("Referer" to data)
-                        )
-                    )
+                if (url.isNotBlank() && !url.contains("data:")) {
+                    Log.d("QFilm", "Found direct M3U8: $url")
+                    val links = M3u8Helper.generateM3u8("QFilm", url, data)
+                    for (link in links) {
+                        callback(link)
+                    }
                     foundCount++
                 }
             }
             
-            // Strategy 2: Look in iframe sources
-            doc.select("iframe").forEach { iframe ->
-                val src = iframe.attr("src")
-                if (src.isNotBlank()) {
-                    Log.d("QFilmProvider", "Found iframe: $src")
+            // Look for iframe embed sources
+            for (iframe in doc.select("iframe[src]")) {
+                val src = iframe.attr("src").trim()
+                if (src.isNotBlank() && src.startsWith("http")) {
+                    Log.d("QFilm", "Found iframe: $src")
                     callback(
                         ExtractorLink(
                             "QFilm",
-                            "Embedded Player",
+                            "Embedded",
                             src,
                             data,
                             Qualities.Unknown.value,
-                            false,
-                            headers = mapOf("Referer" to data)
+                            false
                         )
                     )
                     foundCount++
                 }
             }
             
-            // Strategy 3: Look for any link with common streaming domains
-            val streamingDomains = listOf(
-                "ok.ru", "mail.ru", "vimeo", "youtube", "dailymotion",
-                "dood", "mixdrop", "uptobox", "mega", "google"
+            if (foundCount > 0) return true
+            
+        } catch (e: Exception) {
+            Log.w("QFilm", "HTTP parsing failed: ${e.message}")
+        }
+        
+        // Fallback to WebViewResolver for JavaScript-rendered content
+        return try {
+            Log.d("QFilm", "Using WebViewResolver for $data")
+            
+            val triggerJs = """
+                (function() {
+                    function autoClick() {
+                        ['.play-button','.btn-play','.vjs-big-play-button','.jw-icon-display',
+                         'button.play','button[class*=play]','#play','a.play','.epss','.watch-btn',
+                         'button.watch','button.btn-primary','button.btn','.player-big-play']
+                            .forEach(function(sel){
+                                try {
+                                    var el = document.querySelector(sel);
+                                    if(el && typeof el.click === 'function') { el.click(); }
+                                } catch(_) {}
+                            });
+                        
+                        var videos = document.querySelectorAll('video');
+                        videos.forEach(function(v){
+                            try { 
+                                v.muted = true; 
+                                var p = v.play(); 
+                                if(p && typeof p.catch === 'function') p.catch(function(){}); 
+                            } catch(_) {}
+                        });
+                        
+                        var iframes = document.querySelectorAll('iframe');
+                        iframes.forEach(function(f){
+                            try { 
+                                if(f.contentWindow && f.contentWindow.postMessage) {
+                                    f.contentWindow.postMessage('play','*');
+                                    f.contentWindow.postMessage({action:'play'},'*');
+                                }
+                            } catch(_) {}
+                        });
+                    }
+                    autoClick();
+                    setInterval(autoClick, 800);
+                    setTimeout(autoClick, 1000);
+                    setTimeout(autoClick, 2500);
+                })();
+            """.trimIndent()
+            
+            val resolver = WebViewResolver(
+                interceptUrl = Regex("""\.m3u8|\.mp4|/hls/|/playlist|master\.m3u8""", RegexOption.IGNORE_CASE),
+                script = triggerJs
             )
             
-            doc.select("a[href]").forEach { link ->
-                val href = link.attr("href")
-                if (href.isNotBlank()) {
-                    streamingDomains.forEach { domain ->
-                        if (href.contains(domain, ignoreCase = true)) {
-                            Log.d("QFilmProvider", "Found streaming link: $href")
-                            callback(
-                        ExtractorLink(
-                                    "QFilm",
-                                    "Player",
-                                    href,
-                                    data,
-                                    Qualities.Unknown.value,
-                                    false,
-                                    headers = mapOf("Referer" to data)
-                                )
-                            )
-                            foundCount++
+            val (interceptedRequest, _) = resolver.resolveUsingWebView(
+                requestCreator(
+                    "GET",
+                    data,
+                    referer = data,
+                    headers = buildHeaders(data)
+                )
+            )
+            
+            val videoUrl = interceptedRequest?.url?.toString()
+            Log.d("QFilm", "WebViewResolver intercepted: $videoUrl")
+            
+            if (!videoUrl.isNullOrBlank()) {
+                val lurl = videoUrl.lowercase()
+                return when {
+                    lurl.contains(".m3u8") || lurl.contains("/hls/") -> {
+                        Log.d("QFilm", "Processing HLS playlist: $videoUrl")
+                        val links = M3u8Helper.generateM3u8("QFilm", videoUrl, data)
+                        for (link in links) {
+                            callback(link)
                         }
+                        true
+                    }
+                    lurl.endsWith(".mp4") || lurl.contains(".mp4?") -> {
+                        Log.d("QFilm", "Processing direct MP4: $videoUrl")
+                        callback(
+                            ExtractorLink(
+                                "QFilm",
+                                "WebView MP4",
+                                videoUrl,
+                                data,
+                                Qualities.Unknown.value,
+                                false,
+                                headers = mapOf("Referer" to data)
+                            )
+                        )
+                        true
+                    }
+                    else -> {
+                        Log.d("QFilm", "Trying to load extractor from: $videoUrl")
+                        loadExtractor(videoUrl, data, subtitleCallback, callback)
                     }
                 }
+            } else {
+                Log.w("QFilm", "WebViewResolver returned null URL")
+                false
             }
-            
-            Log.d("QFilmProvider", "Found $foundCount links total")
-            println("✅ Found $foundCount links")
-            
-            return foundCount > 0
         } catch (e: Exception) {
-            Log.e("QFilmProvider", "Error in loadLinks: ${e.message}", e)
-            println("❌ Error: ${e.message}")
-            e.printStackTrace()
-            return false
+            Log.e("QFilm", "WebViewResolver error: ${e.message}", e)
+            false
         }
     }
 }
