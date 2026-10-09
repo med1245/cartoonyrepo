@@ -537,10 +537,18 @@ class QFilm : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        Log.d(logTag, "=== loadLinks START ===")
+        Log.d(logTag, "Input data URL: $data")
+        
         val vid = extractVid(data)
+        Log.d(logTag, "Extracted vid: $vid")
+        
         val playUrl = if (!vid.isNullOrBlank()) "$mainUrl/play.php?vid=$vid" else data
         val watchUrl = data
         val ua = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
+
+        Log.d(logTag, "Watch URL: $watchUrl")
+        Log.d(logTag, "Play URL: $playUrl")
 
         val embeds = linkedSetOf<String>()
         val lowerPriorityEmbeds = linkedSetOf<String>()
@@ -548,9 +556,13 @@ class QFilm : MainAPI() {
         val directMp4 = linkedSetOf<String>()
 
         try {
+            Log.d(logTag, "Fetching watch page...")
             val watchResp = app.get(watchUrl, referer = "$mainUrl/", headers = mapOf("User-Agent" to ua, "Accept" to "text/html,application/xhtml+xml"), timeout = 15)
+            Log.d(logTag, "Watch page status: ${watchResp.code}")
             val watchDoc = watchResp.document
             val watchHtml = watchResp.text
+            Log.d(logTag, "Watch HTML length: ${watchHtml.length}")
+            
             collectEmbedsFromDoc(watchDoc, embeds, lowerPriorityEmbeds)
             val (wm, wp) = scanInlinePlayerJs(watchHtml)
             collectTargetsFromRawMarkup(watchHtml, embeds, directM3u8, directMp4)
@@ -575,7 +587,7 @@ class QFilm : MainAPI() {
             }
             Log.d(logTag, "watch scan -> m3u8=${directM3u8.size}, mp4=${directMp4.size}, embeds=${embeds.size}")
         } catch (e: Exception) {
-            Log.w(logTag, "watch page scan failed: ${e.message}")
+            Log.e(logTag, "watch page scan failed: ${e.message}", e)
         }
 
         if (!vid.isNullOrBlank()) {
@@ -620,6 +632,11 @@ class QFilm : MainAPI() {
         val m3u8Clean = directM3u8.filter(::validateVideoUrl).toList()
         val mp4Clean = directMp4.filter(::validateVideoUrl).toList()
         Log.d(logTag, "POST-VALIDATION: m3u8=${m3u8Clean.size} mp4=${mp4Clean.size} embeds=${embedsClean.size}")
+        
+        // Log the actual URLs found
+        m3u8Clean.forEachIndexed { i, url -> Log.d(logTag, "M3U8[$i]: $url") }
+        mp4Clean.forEachIndexed { i, url -> Log.d(logTag, "MP4[$i]: $url") }
+        embedsClean.forEachIndexed { i, url -> Log.d(logTag, "EMBED[$i]: $url") }
 
         var found = false
         for (link in m3u8Clean) {
