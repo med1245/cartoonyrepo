@@ -233,7 +233,13 @@ class QFilm : MainAPI() {
         Log.d(logTag, "=== LOAD FUNCTION CALLED ===")
         Log.d(logTag, "Loading URL: $url")
         
-        val doc = app.get(url, referer = "$mainUrl/").document
+        val doc = try {
+            app.get(url, referer = "$mainUrl/").document
+        } catch (e: Exception) {
+            Log.e(logTag, "ERROR fetching page in load(): ${e.message}", e)
+            println("!!! QFilm LOAD ERROR: ${e.message}")
+            throw e
+        }
 
         val ogTitle = doc.selectFirst("meta[property=og:title]")?.attr("content")
         val h1Title = doc.selectFirst("h1, h2.title, .title, .movie-title, .entry-title, h2")?.text()?.trim()
@@ -547,21 +553,46 @@ class QFilm : MainAPI() {
         Log.d(logTag, "=== loadLinks START ===")
         Log.d(logTag, "Input data URL: $data")
         
-        // Add a test link immediately to see if callback works
+        // Add THREE test links to ensure callback is working
         try {
+            println("!!! Adding TEST LINK 1")
             callback(
                 ExtractorLink(
-                    "QFilm-TEST",
-                    "TEST LINK - If you see this, callback works!",
-                    "https://test.com/test.mp4",
+                    "QFilm-TEST-1",
+                    "🔴 TEST LINK 1 - CALLBACK WORKS!",
+                    "https://test.com/test1.mp4",
                     "",
-                    Qualities.Unknown.value,
+                    Qualities.P1080.value,
                     false
                 )
             )
-            Log.d(logTag, "Test link added successfully")
+            println("!!! Adding TEST LINK 2")
+            callback(
+                ExtractorLink(
+                    "QFilm-TEST-2",
+                    "🟢 TEST LINK 2 - CALLBACK WORKS!",
+                    "https://test.com/test2.mp4",
+                    "",
+                    Qualities.P720.value,
+                    false
+                )
+            )
+            println("!!! Adding TEST LINK 3")
+            callback(
+                ExtractorLink(
+                    "QFilm-TEST-3",
+                    "🔵 TEST LINK 3 - CALLBACK WORKS!",
+                    "https://test.com/test3.mp4",
+                    "",
+                    Qualities.P480.value,
+                    false
+                )
+            )
+            Log.d(logTag, "✅ All 3 test links added successfully")
+            println("!!! All 3 test links added successfully")
         } catch (e: Exception) {
-            Log.e(logTag, "Test link FAILED: ${e.message}", e)
+            Log.e(logTag, "❌ Test link FAILED: ${e.message}", e)
+            println("!!! TEST LINK FAILED: ${e.message}")
         }
         
         val vid = extractVid(data)
@@ -738,6 +769,9 @@ class QFilm : MainAPI() {
         }
 
         Log.e(logTag, "All stages failed for: $data")
-        return false
+        
+        // Return true because we added test links
+        println("!!! QFilm LOADLINKS END - returning true (test links added)")
+        return true
     }
 }

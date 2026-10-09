@@ -1,0 +1,39 @@
+﻿> Task :StarDima:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :StarDima:preBuild UP-TO-DATE
+> Task :StarDima:preReleaseBuild UP-TO-DATE
+> Task :StarDima:generateReleaseResValues UP-TO-DATE
+> Task :StarDima:generateReleaseResources UP-TO-DATE
+> Task :StarDima:packageReleaseResources UP-TO-DATE
+> Task :StarDima:parseReleaseLocalResources UP-TO-DATE
+> Task :StarDima:generateReleaseRFile UP-TO-DATE
+
+> Task :StarDima:compileReleaseKotlin FAILED
+.\gradlew.bat : e: file:///C:/Users/MEHDI%20MARSAMAN/Documents/G
+itHub/cartoony/StarDima/src/main/kotlin/com/stardima/StarDima.kt
+:624:36 Unresolved reference 'toRequestBody'.
+At line:1 char:1
++ .\gradlew.bat :StarDima:compileReleaseKotlin 2>&1 | Out-File 
+-FilePat ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (e: file:///C:/U... 
+   toRequestBody'.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':StarDima:compileReleaseKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compil
+erRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWor
+kAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 13s
+6 actionable tasks: 1 executed, 5 up-to-date

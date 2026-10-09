@@ -1,0 +1,293 @@
+[GET] 200 https://www.stardima.com/series/season/3177?X-Requested-With=XMLHttpRequest
+[GET] 200 https://www.stardima.com/series/episode/75142
+[POST] 200 https://hyperwatching.com/api/videos/fUw8EOOKKCQJ/link
+  REQUEST BODY: {"server_link_id":"535176"}
+  REQUEST HEADERS:
+    :authority: hyperwatching.com
+    :method: POST
+    :path: /api/videos/fUw8EOOKKCQJ/link
+    :scheme: https
+    accept: */*
+    accept-encoding: gzip, deflate, br, zstd
+    accept-language: en-US,en;q=0.9,fr-FR;q=0.8,fr;q=0.7
+    content-length: 27
+    content-type: application/json
+    origin: https://hyperwatching.com
+    priority: u=1, i
+    referer: https://hyperwatching.com/iframe/fUw8EOOKKCQJ?user_id=0&subscriptionActive=false
+    sec-ch-ua: "Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"
+    sec-ch-ua-mobile: ?0
+    sec-ch-ua-platform: "Windows"
+    sec-fetch-dest: empty
+    sec-fetch-mode: cors
+    sec-fetch-site: same-origin
+    sec-fetch-storage-access: active
+    user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
+    x-csrf-token: 7EGPsBEjl0cVw4cYkrAjr9G70H5A4u6LOMzBK4P2
+[POST] 419 https://hyperwatching.com/api/secure/token
+  REQUEST BODY: {"url":"https://strema.top/embed2/?id=https%3A%2F%2Flulustream.com%2Fe%2F2thdso6rf37v"}
+  REQUEST HEADERS:
+    :authority: hyperwatching.com
+    :method: POST
+    :path: /api/secure/token
+    :scheme: https
+    accept: */*
+    accept-encoding: gzip, deflate, br, zstd
+    accept-language: en-US,en;q=0.9,fr-FR;q=0.8,fr;q=0.7
+    content-length: 87
+    content-type: application/json
+    origin: https://hyperwatching.com
+    priority: u=1, i
+    referer: https://hyperwatching.com/iframe/fUw8EOOKKCQJ?user_id=0&subscriptionActive=false
+    sec-ch-ua: "Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"
+    sec-ch-ua-mobile: ?0
+    sec-ch-ua-platform: "Windows"
+    sec-fetch-dest: empty
+    sec-fetch-mode: cors
+    sec-fetch-site: same-origin
+    sec-fetch-storage-access: active
+    user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
+    x-csrf-token: 7EGPsBEjl0cVw4cYkrAjr9G70H5A4u6LOMzBK4P2
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/master.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/index-v1-a1.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/index-a1.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/master.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/encryption.key?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-1-v1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/index-v1-a1.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/index-a1.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-2-v1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-2-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-3-v1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-3-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+[GET] 200 https://www.stardima.com/series/season/3177?X-Requested-With=XMLHttpRequest
+  RESPONSE: {"episodes":[{"id":75142,"episode_number":1,"title":"001","watch_url":"https:\/\/hyperwatching.com\/iframe\/fUw8EOOKKCQJ"},{"id":75143,"episode_number":2,"title":"002","watch_url":"https:\/\/hyperwatching.com\/iframe\/SCrNnn4w0Fsg"},{"id":75144,"episode_number":3,"title":"003","watch_url":"https:\/\/hyperwatching.com\/iframe\/TaZfxPAFZ07N"},{"id":75145,"episode_number":4,"title":"004","watch_url":"https:\/\/hyperwatching.com\/iframe\/jnIFJapL77nR"},{"id":75146,"episode_number":5,"title":"005","watch_url":"https:\/\/hyperwatching.com\/iframe\/YPUSkciJcrdQ"},{"id":75147,"episode_number":6,"title":"006","watch_url":"https:\/\/hyperwatching.com\/iframe\/LfISY0Hsbp5y"},{"id":75148,"episode_number":7,"title":"007","watch_url":"https:\/\/hyperwatching.com\/iframe\/wpKRbd5a6LFa"},{"id":75149,"episode_number":8,"title":"008","watch_url":"https:\/\/hyperwatching.com\/iframe\/ywfW4WXYuKei"},{"id":75150,"episode_number":9,"title":"009","watch_url":"https:\/\/hyperwatching.com\/iframe\/StI2URLrVHAx"},{"id":75151,"episode_number":10,"title":"010","watch_url":"https:\/\/hyperwatching.com\/iframe\/e2p0ok52XikG"},{"id":75152,"episode_number":11,"title":"011","watch_url":"https:\/\/hyperwatching.com
+[POST] 200 https://www.stardima.com/cdn-cgi/challenge-platform/h/g/jsd/oneshot/ea2d291c0fdc/0.6001846609416805:1773358132:pcmYiJzE7fB2uKZBvKSxn24dAFSP9hppfFvxIIWt-6w/9db8395b9aa4f53d
+  REQUEST BODY: CirysNh863qddkbkxAxrQxoquyqb4d45Ae4ux63hX40Ge5CSrqdhMeaFyhxedo4GFMyqE4F7xhPVoCe+Ec4QY+Ac46BHu4hNyhU16AbhG315bpKRQN3rhSgNKE5GDxy4fHj4Oyyipixc07844SREu3Hrrh+1P+Hg7hVVz64R0qW8ERolQ$i7Q$TeQmOVABFodrWyhfH1DGNOu40Wf+RhohH4$f4hFN4QuhhJMAuQy4Y4$UW44m9Y5$msdcG36eu4$z8IhzusMgLykF4WJjlyqfkz70HtL+8$Rg8eJaT34hpkNBiZXgAGMgGyqYczN4helcnHNqrZm4AonViC4eTriCuYHFi4faa0Xoz+U0XUeaMa44Q9l0jYquIvFE46ebLzyIqxRyMDqbVq48PqZPzFPLvNlDPRyh7bfyhqfzgUrAri$ymF4$NDM7hD1Y41ltC+k1DsQ4gEp8rHW3NAsHkr4bc$Ac0rUBqZs7WycuNL8f4ussJUOZml
+[GET] 200 https://www.stardima.com/series/episode/75142
+  RESPONSE: {"episode":{"id":75142,"title":"001","is_exclusive":0,"is_favorited":false,"episode_number":1,"description":"\u062a\u0630\u0647\u0628 \u0625\u064a\u0628\u064a \u0648\u0635\u062f\u064a\u0642\u062a\u0647\u0627 \u0627\u0644\u0645\u0642\u0631\u0628\u0629 \u062a\u0648\u0633\u064a \u0627\u0644\u0633\u0644\u062d\u0641\u0627\u0629 \u0641\u064a \u0631\u062d\u0644\u0629 \u0627\u0644\u0649 \u0628\u0627\u0644\u062f\u064a\u0627\u0631 \u0644\u062a\u0639\u0644\u0645 \u0623\u0634\u064a\u0627\u0621 \u062c\u062f\u064a\u062f\u0629 \u0648\u062d\u0644 \u0645\u0634\u0627\u0643\u0644 \u0627\u0644\u0622\u062e\u0631\u064a\u0646 \u0628\u0627\u0633\u062a\u062e\u062f\u0627\u0645 \u0627\u0644\u0631\u064a\u0627\u0636\u064a\u0627\u062a \u0648\u0627\u0644\u062a\u0641\u0643\u064a\u0631 \u0627\u0644\u0645\u0646\u0637\u0642\u064a.","watch_url":"https:\/\/hyperwatching.com\/iframe\/fUw8EOOKKCQJ?user_id=0&subscriptionActive=false","download_url":"https:\/\/hyperwatching.com\/download\/fUw8EOOKKCQJ?user_id=0&subscriptionActive=false","duration":"2015","views":0,"likes_count":0,"can_watch":true,"reason":null},"season":{"number":1},"subscription_url":"https:\/\/www.stardima.com\/membership","login_url":"https:\/\/www.sta
+[POST] 200 https://hyperwatching.com/cdn-cgi/challenge-platform/h/g/jsd/oneshot/ea2d291c0fdc/0.6001846609416805:1773358132:pcmYiJzE7fB2uKZBvKSxn24dAFSP9hppfFvxIIWt-6w/9db8396afd78e3cd
+  REQUEST BODY: CirysNh863qddkbkxAxrQ-xquyqb4d45Ae4ux63hX40Ge5CSrqdhMeaFyhxedo4GFMyqE4F7xhPVoCe+Ec4QY+Ac46BHu4hNyhU16AbhG315bpKRQN3rhSgNKE5GDxy4fHj4Oyyipixc07844SREu3Hrrh+1P+Hg7hVVz64R0qW8ERolQ$i7Q$TeQmOVABFodrWyhfH1DGNOu40Wf+RhohH4$f4hFN4QuhhJMAuQy4Y4$UW44m9Y5$msdcG36eu4$z8IhzusMgLykF4WJjlyqfkz70HtL+8$Rg8eJaT34hpkNBiZXgAGMgGyqYczN4helcnHNqrZm4AonViC4eTriCuYHFi4faa0Xoz+U0XUeaMa44Q9l0jYquIvFE46ebLzyIqxRyMDqbVq48PqZPzFPLvNlDPRyh7bfyhqfzgUrAri$ymF4$NDM7hD1Y41ltC+k1DsQ4gEp8rHW3NAsHkr4bc$Ac0rUBqZs7WycuNL8f4ussJUOZml
+  REQUEST HEADERS:
+    :authority: hyperwatching.com
+    :method: POST
+    :path: /cdn-cgi/challenge-platform/h/g/jsd/oneshot/ea2d291c0fdc/0.6001846609416805:1773358132:pcmYiJzE7fB2uKZBvKSxn24dAFSP9hppfFvxIIWt-6w/9db8396afd78e3cd
+    :scheme: https
+    accept: */*
+    accept-encoding: gzip, deflate, br, zstd
+    accept-language: en-US,en;q=0.9,fr-FR;q=0.8,fr;q=0.7
+    content-length: 17135
+    content-type: text/plain;charset=UTF-8
+    origin: https://hyperwatching.com
+    priority: u=1, i
+    sec-ch-ua: "Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"
+    sec-ch-ua-mobile: ?0
+    sec-ch-ua-platform: "Windows"
+    sec-fetch-dest: empty
+    sec-fetch-mode: cors
+    sec-fetch-site: same-origin
+    sec-fetch-storage-access: active
+    user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
+[POST] 200 https://hyperwatching.com/api/videos/fUw8EOOKKCQJ/link
+  REQUEST BODY: {"server_link_id":"535176"}
+  RESPONSE: {"success":true,"status":"completed","watch_url":"https:\/\/strema.top\/embed2\/?id=https%3A%2F%2Flulustream.com%2Fe%2F2thdso6rf37v","server_name":"Lulustream"}
+  REQUEST HEADERS:
+    :authority: hyperwatching.com
+    :method: POST
+    :path: /api/videos/fUw8EOOKKCQJ/link
+    :scheme: https
+    accept: */*
+    accept-encoding: gzip, deflate, br, zstd
+    accept-language: en-US,en;q=0.9,fr-FR;q=0.8,fr;q=0.7
+    content-length: 27
+    content-type: application/json
+    origin: https://hyperwatching.com
+    priority: u=1, i
+    referer: https://hyperwatching.com/iframe/fUw8EOOKKCQJ?user_id=0&subscriptionActive=false
+    sec-ch-ua: "Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"
+    sec-ch-ua-mobile: ?0
+    sec-ch-ua-platform: "Windows"
+    sec-fetch-dest: empty
+    sec-fetch-mode: cors
+    sec-fetch-site: same-origin
+    sec-fetch-storage-access: active
+    user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
+    x-csrf-token: o4Kr1b5YzlRFAECboaKWsGpG67sbmz51m74c5WXs
+[POST] 419 https://hyperwatching.com/api/secure/token
+  REQUEST BODY: {"url":"https://strema.top/embed2/?id=https%3A%2F%2Flulustream.com%2Fe%2F2thdso6rf37v"}
+  RESPONSE: <!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>404 - Page Not Found</title>
+    <style>
+        * {
+            font-family: 'Google Sans', Arial, sans-serif;
+        }
+        html, body {
+            margin: 0;
+            padding: 0;
+        }
+        .flex-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: white;
+            animation: colorSlide 15s ease-in-out infinite;
+        }
+        .text-center {
+            text-align: center;
+        }
+        h1 {
+            font-size: 8em;
+            margin: 10px;
+            border-bottom: 1px dashed white;
+        }
+        h1 span {
+            animation: fadeIn 2s ease infinite;
+        }
+        #digit1 { animation-delay: 200ms; }
+        #digit2 { animation-delay: 300ms; }
+        #digit3 { animation-delay: 400ms; }
+
+        h3 {
+            margin: 10px;
+            animation: fadeIn 2s ease infinite;
+        }
+        button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 1.1rem
+  REQUEST HEADERS:
+    :authority: hyperwatching.com
+    :method: POST
+    :path: /api/secure/token
+    :scheme: https
+    accept: */*
+    accept-encoding: gzip, deflate, br, zstd
+    accept-language: en-US,en;q=0.9,fr-FR;q=0.8,fr;q=0.7
+    content-length: 87
+    content-type: application/json
+    origin: https://hyperwatching.com
+    priority: u=1, i
+    referer: https://hyperwatching.com/iframe/fUw8EOOKKCQJ?user_id=0&subscriptionActive=false
+    sec-ch-ua: "Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"
+    sec-ch-ua-mobile: ?0
+    sec-ch-ua-platform: "Windows"
+    sec-fetch-dest: empty
+    sec-fetch-mode: cors
+    sec-fetch-site: same-origin
+    sec-fetch-storage-access: active
+    user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
+    x-csrf-token: o4Kr1b5YzlRFAECboaKWsGpG67sbmz51m74c5WXs
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/master.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+  RESPONSE: #EXTM3U
+
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio0",NAME="العربية",LANGUAGE="ar",AUTOSELECT=YES,DEFAULT=YES,CHANNELS="2",URI="https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/index-a1.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0"
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio0",NAME="English",LANGUAGE="en",AUTOSELECT=NO,DEFAULT=NO,CHANNELS="2",URI="https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/index-a2.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0"
+
+#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=1326580,RESOLUTION=1920x1080,FRAME-RATE=25.000,CODECS="avc1.640028,mp4a.40.2",VIDEO-RANGE=SDR,AUDIO="audio0"
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/index-v1-a1.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+
+
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/index-v1-a1.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+  RESPONSE: #EXTM3U
+#EXT-X-TARGETDURATION:10
+#EXT-X-ALLOW-CACHE:YES
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-KEY:METHOD=AES-128,URI="https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/encryption.key?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0"
+#EXT-X-VERSION:3
+#EXT-X-MEDIA-SEQUENCE:1
+#EXTINF:10.200,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-1-v1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXTINF:10.200,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-2-v1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXTINF:10.200,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-3-v1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXTINF:10.200,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-4-v1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXTINF:10.200,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-5-v1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/index-a1.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+  RESPONSE: #EXTM3U
+#EXT-X-TARGETDURATION:10
+#EXT-X-ALLOW-CACHE:YES
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-KEY:METHOD=AES-128,URI="https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/encryption.key?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0"
+#EXT-X-VERSION:3
+#EXT-X-MEDIA-SEQUENCE:1
+#EXTINF:10.005,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXTINF:10.005,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-2-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXTINF:10.005,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-3-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXTINF:9.984,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-4-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXTINF:10.005,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-5-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXT
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/master.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+  RESPONSE: #EXTM3U
+
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio0",NAME="العربية",LANGUAGE="ar",AUTOSELECT=YES,DEFAULT=YES,CHANNELS="2",URI="https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/index-a1.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0"
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio0",NAME="English",LANGUAGE="en",AUTOSELECT=NO,DEFAULT=NO,CHANNELS="2",URI="https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/index-a2.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0"
+
+#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=1326580,RESOLUTION=1920x1080,FRAME-RATE=25.000,CODECS="avc1.640028,mp4a.40.2",VIDEO-RANGE=SDR,AUDIO="audio0"
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/index-v1-a1.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+
+
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/encryption.key?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+  RESPONSE: ej/1qcJD6I4vn0J3hZ8SwA==
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-1-v1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+  RESPONSE: Zv6wMeBvTe6ND2/ZqZBFiHCWHWdnJcKz9Np52++v9ej/YVHVVJtBZ/0/t9K9AR86iaY2R9riUo/k+/cOlIC4A3ilQ/OXQlQtp0KtmCSfU2v0VdHqoYyuhB9ci+NYsfZjkLAvm3oHMMCQRdYrnCBkEgZc5V00jggYdjVQqqZS8L66AoyrlVewU7xq0Ffd9++KYWbtkX56dKQ36c2ljqvfJjS7Y21T1cNf29nxGtcGcYTxcVNm8dx3uQ0fM80z6jHVAyVzZiiQFpP49DA2VX3NXeonaTYiGdijVjveYhS3ogvsi9Z/wP9JQrrcwqPjq27K+DR7vXRV0ZqnaCZoF4QhcWZ5hmFPP3cdZjOn1lr2CdSaBhBYeBfmtUCe7E1LdwKgRaVK9NcNzYqnXKhp02IU6HM6v8lMqrAtQftCwf7zchA2zf1I0XxclFQcYRtPeMO3rzXOOCm3K5mt+a1QyGSl0MpaQCR8pZ739IVIbdzadhch8ZzxZ7u8/Fqz3YKkdWFSh8teci/+6s8cmVe+vEpGYNybMYirCCrus5d6CAQjRrGUEfaKZZ86lg0fxbQT9jMI/YbINttqC0rqRuM5dbuOcnh9/CWvS6GfqclGHQaJY/9mkZOvCsd5w4QtC2U+Cp78VID5AeZl71uhsyqTeu/sdwzBOUTFGlp4wqmTqSxG+Gbw8GjH2Qf7Y1vPVNK65y9r55Jb4p7RRg+CHGu8ITbRNqZTgR5VDGeOKBLkLHx/lFkhoqI+71Q1fHV0IIuSUnpg61cgAHB4mQZe0ihhhE7NQ/qNiaRowWphqAqSBFmIIhsXicAQaXA3Y72A/qkVGnAu0wmVUG6/9OQ9M61TA/vKdSbfmZpg7cNOUZbQ9VhUIGQbCL+XsSQU4/AVv4+fu4aI4v7ss1fJUJ9GiGzT/amunpwhpHKIkWFLvlRQ2X9gKQtvcBNgYn7ZBmopvga7wzENF8IPN8Lji11EoMXdVw/W4FlKvxyKwmsWtW/crfx7JmFMM8c4jIWAI7bnc/7YqLRfY7Zkb51HYQxKFeDjDwNDs34LqhO4QMIsgzlWErFKwICv0xs/hy3Du5H564/MAguyhIA9uQaPPia45CyhuSCWqCVM5CjUazL0i30fjPtTyaW0XEal6DK0qPmjez58AGmRGX2ZoIDPeSlUZXX8yVBQEHrMpF+ZvSdw61rsMzU6k1Bu97LU
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+  RESPONSE: Zv6wMeBvTe6ND2/ZqZBFiHCWHWdnJcKz9Np52++v9ej/YVHVVJtBZ/0/t9K9AR86iaY2R9riUo/k+/cOlIC4A3ilQ/OXQlQtp0KtmCSfU2v0VdHqoYyuhB9ci+NYsfZjkLAvm3oHMMCQRdYrnCBkEgZc5V00jggYdjVQqqZS8L66AoyrlVewU7xq0Ffd9++KYWbtkX56dKQ36c2ljqvfJjS7Y21T1cNf29nxGtcGcYTxcVNm8dx3uQ0fM80z6jHVQVrrzVYHiZBDnHb/fRMfRW5XwgeHnJD0FZRRMnZr/JKTlF5iT9eM9dmETDTJJImCk7DP95pxTgC/xbdA5GNe/t+YmX682hVD++hLYeHBBkVccULNqP4/V4ARpSiLjzVHLN7+a+M3T4PeZHR2OaHf4bKjx6PwNcCZCufVPMQwMMgk6m1AcaW0eVsiGnd3tHp8oiZVZLAmS5HkZEcH24o/k2SUL++2uZb9Q0bqv/Am5jLuC5ak4QMirsAI510PJQ7N24IxXPvvaeNuyL4uU6Z2UMtDNETgGRLB96T6FdqUxkfgn/Jq71h0dAJeYs1ZtC+SXXvBi3JvKksYIdMazDoOKG8+7yyI3b/b/28saty5+Q3VkF+65mGDfMTUcmQq9dss33A8cRAhbArGi6CmFdOgv4mliwF3YK3gC4VE+BCNAjirdh37/J8ezGqBhYXhZm2w5i5dTTIT/9pkcgfV4aKAb/6XxaDIqep9aOegFu6T/1Y6FvYg/jbw4t6rj4GNOur6Oz2J3uhJgGWMFXcJFHJQZBv/x0m0grhjCMgmq5rlIwRcKAWV8PLa6b5Hs6BfikxfZ/MBfF3NlmuHvzwPU5wyIljq0xhtKi6j91lghIC14XRryryXFNSvH0qQt11lOpr+zMMoHQ8KelyLRoMrnenmbKaSQa7LyNqOf7kOzwWkEnU+HzQ51f2WY0dUhZAHg9oJoE5qTq5Qb2+OqoaYfcrD1rITk6SHfBeV9ppPTUTErME/I+ywxTcIXpV4k5yfTKVYv6lRrxRKEFY32IA66BR+z8PvivotHK7975C4tRZexiUrofP8ibj/QUFZ5FIM7vpMhygCl1gd2YwGayqRNEXhnOQ+cDMX8skWT7JV4V003v9val0kE64M+GJZ5uD99wkog6USJjOWws9mbY4R9HXDgZQ9CKMST3Bkpj72FBcPfJ+b8EVd
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/index-v1-a1.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+  RESPONSE: #EXTM3U
+#EXT-X-TARGETDURATION:10
+#EXT-X-ALLOW-CACHE:YES
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-KEY:METHOD=AES-128,URI="https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/encryption.key?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0"
+#EXT-X-VERSION:3
+#EXT-X-MEDIA-SEQUENCE:1
+#EXTINF:10.200,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-1-v1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXTINF:10.200,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-2-v1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXTINF:10.200,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-3-v1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXTINF:10.200,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-4-v1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXTINF:10.200,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-5-v1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/index-a1.m3u8?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+  RESPONSE: #EXTM3U
+#EXT-X-TARGETDURATION:10
+#EXT-X-ALLOW-CACHE:YES
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-KEY:METHOD=AES-128,URI="https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/encryption.key?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0"
+#EXT-X-VERSION:3
+#EXT-X-MEDIA-SEQUENCE:1
+#EXTINF:10.005,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXTINF:10.005,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-2-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXTINF:10.005,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-3-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXTINF:9.984,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-4-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXTINF:10.005,
+https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-5-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+#EXT
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-2-v1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+  RESPONSE: Qf0JtjETTX2g3vftLw2kw5qKfxZy//U/nA8Ydela9DqmAzfRhl2myiZ9M2cM1dQSSSYPGvqFKhGHcuOMXqHznqhHJC2OqDFXhGINCMtK+tZvaiC5ZJJu4SFrzbEjF2QmRmke+GqtFCNd41IHyGXJkH2fVA5Kfcl+N34e3uk7GevGIRJ2M84TFYeysxwyJqYiyi3JyALKqs5pOrKrRethRRIOTXuMKs+8ABnJuomTxaGZgAn8pAaaOM08TPrQKscBc8yB+XNEwBVpSlmL2NnXhW4YRsIo5KwztBwyABMMd3RRh9Tuf/5DQAuTswHRo01mE6Zyn01Xo9IAppzPPbQwrSVgZODvj/DUM5JShks+R5wu6+xbosD5w7QRDivNOmPhzLSWAiAoIuATRCXT0fWprn44x57S+/dk0QGouym1rQAwzmoSRb/FNVMWgD2n2uOH8BbjURQtuzOaxkQ9RBeaA/QgdMwLrJXf3vWtM8sa8jCpnWb/mI5uG+u5zAejwVTwCS684ThlwNHJgDGDbFEhNsW0GbdhZmbzf6ME4m915H1bbBlKza+0RoqT3I9Xv5NuUo8lWl4qhkQvAaMptki4vbdf0/NuFwhOQlFjyG4HFKM73LBhHrAXBxeoRnKQbEGAjYzWY/cQX+5mcg3vwmMcVKlWH4j0wPMMhqu+4i1Ke+5HhTO23OYGGzh8I2/PqnZrcJTWj0eqGllLTrdA9DLeSqIpecfftdpBSHZ+AABzx41Cx3AkuTkqw1SIz/jKqNngK3wwu9Pvwq5L4/WFmhTek4EQeVCdsmdqiuUSfbsiMGEPax77qco8wRTfGCsIApLKoaWQ1EijRpjF/9mO4Qq9tV9lfzKghtW+q985wX6dvO1p0/mdd6nc+amL57mscM4GdHrUovvy9PgopDY88+Y+Jr2CqwaCDgMHyMZsKiGk/KbKGYq44xR0lfBwGIs5jys+c9zFGofwC0uxLCFEH7w5rdbWGu06L3lv9ODwC/ry9ax1NUt2exCatZ/M/CR0UUf7uYEiyj/4Ah2uEK9ranlEtvdKG/tJ4GfguXjdZexj7EIguRBV/YxN9ePsfrO5SDTVFEG3bCaIFjDjIJbHncjShfZaS9BUTdv33I4+sq8Y0wji9RCGpALMAi7eaaixGTvi1TAfTwFzTY/Cg1IU50DId/3oOfI18hYDvrcZ5B+SC5m/3cVE
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-2-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+  RESPONSE: Qf0JtjETTX2g3vftLw2kw5qKfxZy//U/nA8Ydela9DqmAzfRhl2myiZ9M2cM1dQSSSYPGvqFKhGHcuOMXqHznqhHJC2OqDFXhGINCMtK+tZvaiC5ZJJu4SFrzbEjF2QmRmke+GqtFCNd41IHyGXJkH2fVA5Kfcl+N34e3uk7GevGIRJ2M84TFYeysxwyJqYiyi3JyALKqs5pOrKrRethRRIOTXuMKs+8ABnJuomTxaGZgAn8pAaaOM08TPrQKscBWpv2wixqx+Q9TvJbofMy1YGzWhE9dknIvEQQd5thna1B34CLFqIWijSPcyUZAn90m1E4tgXmPMTc+31ZY+epc9OoEDXLMP8kiobHcEWXjj/MnLihkROa0tykXwonPZFvoMQv4k/SeEfiXqtQKAMErMyG9Rlo5UF+g0+gsLsw510KNjhZ/JaRx28wdiH+TwtNyMER8uGfG7U7xPmy95iADyfdameCGXFdWAtlVCxtQ8i8jCWkUMIaNJeNCdRTYoM94WFYgMmVv+6rPG/XOEwE6GKYN7di6Z67r0M0vk3Y0RK81EHGKD7GkFBnf/YWN29IjsuV3jAmXo7KIqJ7Pxow55Sv7WzSr9lwC3uW736CbrxKECeF1guz1lO2WNJ7PDJanZoc9N8k0Mu1qPKhoRQbDKiDWmXRKZLrGbhHGDFMc1rQNU0yqAf/HOxAmr7XzdDGHHJ4CYxsUR+dNFP7W1lAySIl+dWlfPDOSa8O1DmKfs1EBC2Vzpq3l1Hypq69Xe6NkiLefY39vwqOxzPrlHkoAOIAQ2ZNGi3zOt2Wep8wWA20Rmi/7DH6uBQelcl0TQg6oqK2f9B3WmC7KAXPCtFaFcRAwO4TZkerCaqN1C6gTVcEvbSh3zaC9GWqyEBwTpsnn2mQ84j121Q36mscWqeVF2/nW7Odmu8/CaXbi5ugYd0c/ozQ8+/pjg+1p4NZo9yjESa4LHBusreu32NjgKucbJP4rUn1mTNsKoijyZme4JbAGwJ1kDm7W10Hcix4CUP/xRZKSDWSqfYudR++KTsY+NYfXPcCVAuUeYlhsXqh7wI4np9pvPTZ7bQcWJFUeXYpEpb3dRCS8rj2vtB/JYfYtoQXPHPoxr2rn7cwd4FKjdPXtz7T9WbGnkYbhaDSI788qNGIA7k1a0eXa2MlAMQUJCUE+dlnSW/Vr4vrdxb2dWRkphv4
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-3-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+  RESPONSE: dDv0ySlN+ZhBIsWIEGib96HAY3zHJe3KNfzZnBdOnJ5a5B56H+AkYtpMR0PwxlmqrkZ3HYAu56Wgk+bTN4Pf+Aw4kkzB0Ssrlm7lock9Otg5QmKXkf5EK0puJAaWQuZOSgC3GC5yblgL9gb2BTRxbIh4QWVsy8Of+VBaVcmITfbwcYZQGatm74LWtafkvGkW19RYDQ1dv7+NLaNi+atbdAF2DhBj1UpULuwooqLjWdXEMl4TXRug03x9tRxaHM8zcdXhkv+XpERMASmxZTQNX9wB5W/M1MFvf+xQcXx4cI4HrEKftbBahIGUtmQqTbOPdVlf5zzvOs60h7KvfPmT2pzhNZO42evQ82O1PFo4hiRnXXlRTUmr/1GRcpLaWABH6aSfuSMeapuUJu73Vs1c2X6MfWCCarfXZ+4RnZDcFrZoS1m7inFBaErcEFy50uSMybKyNudvIvF7kxY3mQMvYhn1ca7Mu3f3XaaroJpvwJLXUD9wznoLoRfgD0zopgOGj1E7u+IqFR2imshPIJMJn62HheU20A2dChJXcacJllAnNECTjOIhGpG3C5qIoW53xYJCgjAOu//Go1I7c/uHzujFyNSgeXwF9YAF66rVkAWVkWEC1Wp6GiQps2vmROxhSxcNlZUJs5l7+P5R+KQI1dR4vbsoy+YQh/aoowRpu4LL18Sw5UjVhaPyVU0P8UNSbu/1pxatuXEKwdFvotEh8PB/nw582v9I4i5P1K3dm8F86MS2ym74R79lFL5NsODl5yexk/ZYazZWkWTwldgmg3QnETMRE0QWmt03wQyz08hocmfmlQ9tgbT80HsCz8ysO6mxa6WhPVtGIR6ORCP+IAJn6d5c3mP6FQ7paUJI9LsctuKRp0GmYzPd66t/n1OMP2gBFtoG3Nw1g/WWZJRrKPWiK/+lcHrK7kvc3edr1N0pdlL5jmlMIZ2B1wcxpwkl0QX3uZf+GqBdGZc30xSDPc8CZNRnWi1yXeNRSMWopLAVnR0RmCQ47bBXYv5bkCMtJ2FTt+ZTwxEgG1a+fVqSKebLRTI0U0lf5fbmbRvvbC6lwMQMqMDFZ659CwXqH+q7hT/bzem8LsdU2bykQi3Mi1EEANlX8P++HkSIKjXhkzViSXaR3aqOjrPv/4eUWnIB3kCa9k+D37Vy+8YSONP470bjROL6amgXwyLXN2Lrk8QTL9VC
+[GET] 200 https://61kzjdwdub6m.tnmr.org/hls2/01/03296/2thdso6rf37v_h/seg-3-v1-a1.ts?t=JSa0bZtFxpZkwg6Mh2JMK5cBpniVUjKH1jtUR1xCUIU&s=1773374837&e=28800&f=16484521&i=0.3&sp=0
+  RESPONSE: dDv0ySlN+ZhBIsWIEGib96HAY3zHJe3KNfzZnBdOnJ5a5B56H+AkYtpMR0PwxlmqrkZ3HYAu56Wgk+bTN4Pf+Aw4kkzB0Ssrlm7lock9Otg5QmKXkf5EK0puJAaWQuZOSgC3GC5yblgL9gb2BTRxbIh4QWVsy8Of+VBaVcmITfbwcYZQGatm74LWtafkvGkW19RYDQ1dv7+NLaNi+atbdAF2DhBj1UpULuwooqLjWdXEMl4TXRug03x9tRxaHM8zIZOsk0AV5Yeo1wbK4vzXkBCkobI0DFX2NfpRkc5InPWiMEq1dHEs2EuurkXwWkhSnjxs5SclxttHh+ANcWOgwTP65tJUq8Dvl1FkeWQaWwiMsZp4LwLxIkIbKcXZEiGgbz7VKxh3aJSaHOnFiFJVzM6MGKHLfD244fisKOlqiVRS5MZNK+ixeMfffIADTlfeN7vs1L/rnIYLQ9y01U84+gJ+VXQlWU8T/yUELASIMoj5zGUMY4Gy/uIO3ngWiESu0yp9A/amPtW81HUAEMNSGHTj+qKzGyzzD/6/y53RhMvkcDUv1A3usRE068UBx5n+EX9CE/Cxmgl6d0PpZ4hqp/Tl1jiWEbwrtgPIXVo/s8b1ykktUe2Rnne/A2g3wIqyiRAtsthGSKHtPNi2D4wEJS5Uc/SdHOrbgHfObDpnnxe0wDC9sW+A81Ynh0CGXkapCbdRuLmQC1tCZSy765uoCFLlIMHWm/9C8AbOXuXPEf5p3zpElt+JSSvD8K0NcxTJmFzoWQnasVni1qYHrV1bcZmFlMBLHgchN5IPRnL1oftm5wv/fFayi8bVKgtbulF2aKJcNLYUj8IjT2MfSqPV+76EJNRSHtPKMB1LqW1qYx4zYEP5/zR4xJrRi/SG/2bZIphq8oo0vpsD60XIafWRVKHBkMdNPA4od+JwPFhu+jx2cycl7BNZ64akysURC2toEITIRRBRggsYuYG2+2nqT6+zJTkbryBm75aR2Un3Tx2QxeGJU4tkC00iucA3q7A8uuQ6cuczbLzOVPyt5l+4QYt6N2bxC7h1diXd7LvXAMENNw0AO+8fskzA2Pses7vOGG/bxTJj8GLgBjJmBtF605DqjSL3CM1aniswzALSbNFGgyMD9/k0+Y0B47Og1+hercch5rWi1s6Hfk1F3dUNHGflkrakFOdLis9yg4wxJX4VgXbx

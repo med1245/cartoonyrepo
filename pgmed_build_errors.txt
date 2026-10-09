@@ -1,0 +1,38 @@
+﻿> Task :PGMED:preBuild UP-TO-DATE
+> Task :PGMED:preReleaseBuild UP-TO-DATE
+> Task :PGMED:mergeReleaseJniLibFolders
+> Task :PGMED:mergeReleaseNativeLibs NO-SOURCE
+> Task :PGMED:stripReleaseDebugSymbols NO-SOURCE
+> Task :PGMED:generateReleaseResValues UP-TO-DATE
+> Task :PGMED:extractDeepLinksForAarRelease
+> Task :PGMED:copyReleaseJniLibsProjectAndLocalJars
+> Task :PGMED:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :PGMED:generateReleaseResources UP-TO-DATE
+> Task :PGMED:packageReleaseResources UP-TO-DATE
+> Task :PGMED:parseReleaseLocalResources UP-TO-DATE
+> Task :PGMED:generateReleaseRFile UP-TO-DATE
+> Task :PGMED:compileReleaseKotlin UP-TO-DATE
+> Task :PGMED:extractReleaseAnnotations
+> Task :PGMED:javaPreCompileRelease
+> Task :PGMED:mergeReleaseShaders
+> Task :PGMED:compileReleaseJavaWithJavac NO-SOURCE
+> Task :PGMED:mergeReleaseGeneratedProguardFiles
+> Task :PGMED:mergeReleaseConsumerProguardFiles
+> Task :PGMED:compileReleaseShaders NO-SOURCE
+> Task :PGMED:generateReleaseAssets UP-TO-DATE
+> Task :PGMED:packageReleaseAssets
+> Task :PGMED:prepareReleaseArtProfile
+> Task :PGMED:prepareLintJarForPublish
+> Task :PGMED:processReleaseJavaRes
+> Task :PGMED:mapReleaseSourceSetPaths
+> Task :PGMED:writeReleaseAarMetadata
+> Task :PGMED:mergeReleaseResources
+> Task :PGMED:processReleaseManifest
+> Task :PGMED:mergeReleaseJavaResource
+> Task :PGMED:syncReleaseLibJars
+> Task :PGMED:bundleReleaseAar
+> Task :PGMED:verifyReleaseResources
+> Task :PGMED:assembleRelease
+
+BUILD SUCCESSFUL in 2s
+26 actionable tasks: 20 executed, 6 up-to-date
