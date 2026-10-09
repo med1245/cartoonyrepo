@@ -127,43 +127,110 @@ class QFilm : MainAPI() {
             ).document
             
             var foundCount = 0
+            val html = doc.outerHtml()
             
-            // Find all video/stream links
-            doc.select("a, iframe, source, [data-url], [data-src], [data-link]").forEach { el ->
-                val url = el.attr("href").ifBlank { 
-                    el.attr("src").ifBlank { 
-                        el.attr("data-url").ifBlank { 
-                            el.attr("data-src").ifBlank { el.attr("data-link") }
-                        }
-                    }
-                }
-                
-                if (url.isNotBlank() && (url.contains(".mp4") || url.contains(".m3u8") || url.contains("watch") || url.contains("play"))) {
-                    val title = el.attr("title").ifBlank { el.text().take(50) }
+            // Debug: Log HTML to find video links
+            Log.d("QFilmProvider", "Page HTML length: ${html.length}")
+            
+            // Strategy 1: Look for direct video URLs in JavaScript
+            val mp4Regex = Regex("""(https?://[^\s"'<>]+\.mp4[^\s"'<>]*)""")
+            val m3u8Regex = Regex("""(https?://[^\s"'<>]+\.m3u8[^\s"'<>]*)""")
+            
+            mp4Regex.findAll(html).forEach { match ->
+                val url = match.groupValues[1]
+                if (url.isNotBlank()) {
+                    Log.d("QFilmProvider", "Found MP4: $url")
                     callback(
                         ExtractorLink(
                             "QFilm",
-                            title.ifBlank { "مباشر" },
+                            "مباشر (MP4)",
                             url,
                             data,
                             Qualities.Unknown.value,
                             false,
-                            headers = mapOf(
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                "Referer" to data
-                            )
+                            headers = mapOf("Referer" to data)
                         )
                     )
                     foundCount++
                 }
             }
             
-            Log.d("QFilmProvider", "Found $foundCount links")
+            m3u8Regex.findAll(html).forEach { match ->
+                val url = match.groupValues[1]
+                if (url.isNotBlank()) {
+                    Log.d("QFilmProvider", "Found M3U8: $url")
+                    callback(
+                        ExtractorLink(
+                            "QFilm",
+                            "مباشر (HLS)",
+                            url,
+                            data,
+                            Qualities.Unknown.value,
+                            false,
+                            headers = mapOf("Referer" to data)
+                        )
+                    )
+                    foundCount++
+                }
+            }
+            
+            // Strategy 2: Look in iframe sources
+            doc.select("iframe").forEach { iframe ->
+                val src = iframe.attr("src")
+                if (src.isNotBlank()) {
+                    Log.d("QFilmProvider", "Found iframe: $src")
+                    callback(
+                        ExtractorLink(
+                            "QFilm",
+                            "Embedded Player",
+                            src,
+                            data,
+                            Qualities.Unknown.value,
+                            false,
+                            headers = mapOf("Referer" to data)
+                        )
+                    )
+                    foundCount++
+                }
+            }
+            
+            // Strategy 3: Look for any link with common streaming domains
+            val streamingDomains = listOf(
+                "ok.ru", "mail.ru", "vimeo", "youtube", "dailymotion",
+                "dood", "mixdrop", "uptobox", "mega", "google"
+            )
+            
+            doc.select("a[href]").forEach { link ->
+                val href = link.attr("href")
+                if (href.isNotBlank()) {
+                    streamingDomains.forEach { domain ->
+                        if (href.contains(domain, ignoreCase = true)) {
+                            Log.d("QFilmProvider", "Found streaming link: $href")
+                            callback(
+                        ExtractorLink(
+                                    "QFilm",
+                                    "Player",
+                                    href,
+                                    data,
+                                    Qualities.Unknown.value,
+                                    false,
+                                    headers = mapOf("Referer" to data)
+                                )
+                            )
+                            foundCount++
+                        }
+                    }
+                }
+            }
+            
+            Log.d("QFilmProvider", "Found $foundCount links total")
             println("✅ Found $foundCount links")
+            
             return foundCount > 0
         } catch (e: Exception) {
             Log.e("QFilmProvider", "Error in loadLinks: ${e.message}", e)
             println("❌ Error: ${e.message}")
+            e.printStackTrace()
             return false
         }
     }
