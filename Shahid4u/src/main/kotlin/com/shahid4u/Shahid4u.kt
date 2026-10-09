@@ -6,6 +6,8 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.amap
 import com.lagradost.cloudstream3.network.CloudflareKiller
+import com.lagradost.cloudstream3.network.WebViewResolver
+import com.lagradost.nicehttp.requestCreator
 import okhttp3.Interceptor
 import org.json.JSONArray
 import org.json.JSONException
@@ -107,6 +109,19 @@ class Shahid4u : MainAPI() {
         }
     }
 
+    private fun detectCloudflareBlock(doc: org.jsoup.nodes.Document, html: String?): Boolean {
+        if (!html.isNullOrBlank()) {
+            val l = html.lowercase()
+            if (l.contains("just a moment") || l.contains("enable javascript and cookies") ||
+                l.contains("ray id:") || l.contains("checking your browser") ||
+                l.contains("attention required") || l.contains("cloudflare") && l.contains("captcha")) return true
+        }
+        val title = doc.selectFirst("title")?.text().orEmpty().lowercase()
+        return title.contains("just a moment") || title.contains("attention required") ||
+                title.contains("cloudflare") || title.contains("403 forbidden") ||
+                title.contains("429 too many") || title.contains("503 service")
+    }
+
     private suspend fun httpGet(url: String, referer: String? = null): org.jsoup.nodes.Document {
         val headers = buildMergedHeaders(url, referer)
         val safeRef = encodeUri(referer ?: mainUrl)
@@ -124,7 +139,25 @@ class Shahid4u : MainAPI() {
             Log.d(logTag, "Resolved final referer: $resolvedReferer")
         }
 
-        return response.document
+        val doc = response.document
+        val htmlText = runCatching { response.text }.getOrNull()
+        if (detectCloudflareBlock(doc, htmlText)) {
+            Log.w(logTag, "Cloudflare block detected for $url, retrying with interceptor-only...")
+            try {
+                val retryResp = app.get(
+                    url,
+                    referer = safeRef,
+                    headers = buildBrowserHeaders(referer),
+                    interceptor = cfInterceptor
+                )
+                val retryDoc = retryResp.document
+                val retryHtml = runCatching { retryResp.text }.getOrNull()
+                if (!detectCloudflareBlock(retryDoc, retryHtml)) return retryDoc
+            } catch (t: Throwable) {
+                Log.w(logTag, "Retry also failed for $url: ${t.message}")
+            }
+        }
+        return doc
     }
 
     private fun parseCard(element: Element): SearchResponse? {
@@ -336,31 +369,60 @@ class Shahid4u : MainAPI() {
         }
     }
 
+    private fun normalizeToWatch(data: String): String {
+        if (data.contains("/watch")) return data
+        val listOfPatterns = listOf("/film/", "/movie/", "/episode/", "/series/", "/download/", "/season/", "/movies/", "/episodes/", "/tv/")
+        var out = data
+        for (p in listOfPatterns) {
+            if (out.contains(p)) {
+                out = out.replace(p, "/watch/")
+                return out
+            }
+        }
+        return out
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val watchUrl = data
-            .replace("/film/", "/watch/")
-            .replace("/episode/", "/watch/")
-            .replace("/download/", "/watch/")
-            .replace("/season/", "/watch/")
+        val watchUrl = normalizeToWatch(data)
 
         val embedUrls = linkedSetOf<String>()
+        val directHls = linkedSetOf<String>()
+        val directMp4 = linkedSetOf<String>()
+        val ua = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
         try {
-            val watchDoc = httpGet(watchUrl, referer = data)
-            val htmlContent = watchDoc.outerHtml()
+            val rawWatchResp = runCatching {
+                app.get(watchUrl, referer = data, headers = buildMergedHeaders(watchUrl, data), interceptor = cfInterceptor)
+            }.getOrNull()
+            val watchDoc = if (rawWatchResp != null) {
+                val wdoc = rawWatchResp.document
+                val whtml = runCatching { rawWatchResp.text }.getOrNull()
+                if (detectCloudflareBlock(wdoc, whtml)) {
+                    Log.w(logTag, "loadLinks: CF block on watch page, retrying via httpGet...")
+                    httpGet(watchUrl, referer = data)
+                } else wdoc
+            } else httpGet(watchUrl, referer = data)
+
+            val htmlContent = runCatching { rawWatchResp?.text }.getOrNull() ?: watchDoc.outerHtml()
             embedUrls.addAll(parseEmbedUrls(htmlContent))
             watchDoc.select("iframe[src]").forEach { iframe ->
                 val src = iframe.absUrl("src").ifBlank { iframe.attr("src") }
                 val absSrc = makeAbsoluteUrl(src)
                 if (!absSrc.isNullOrBlank()) embedUrls.add(absSrc)
             }
+            Regex("""https?://[^\s"'\\<>]+\.(?:m3u8|mp4|webm|mkv)(?:\?[^\s"'\\<>]*)?""", RegexOption.IGNORE_CASE).findAll(htmlContent).forEach { m ->
+                val v = m.value
+                if (v.contains(".m3u8", ignoreCase = true) || v.contains("/hls/")) directHls.add(v)
+                else directMp4.add(v)
+            }
         } catch (e: Exception) {
             Log.e(logTag, "loadLinks -> failed to fetch watch page $watchUrl: ${e.message}")
         }
+
         try {
             val downloadUrl = watchUrl.replace("/watch/", "/download/")
             if (downloadUrl != watchUrl) {
@@ -375,21 +437,90 @@ class Shahid4u : MainAPI() {
             Log.w(logTag, "loadLinks -> download page failed: ${e.message}")
         }
 
-        if (embedUrls.isEmpty()) {
-            Log.e(logTag, "loadLinks -> no embed urls found on $watchUrl")
-            return false
-        }
-
-        val results = embedUrls.toList().amap { embedUrl ->
+        for (link in directHls) {
             try {
-                resolveEmbedUrl(embedUrl, watchUrl, subtitleCallback, callback)
-            } catch (e: Exception) {
-                Log.w(logTag, "resolveEmbedUrl failed ($embedUrl): ${e.message}")
-                false
+                M3u8Helper.generateM3u8(this.name, link, referer = watchUrl, headers = mapOf("User-Agent" to ua, "Referer" to watchUrl)).forEach(callback)
+            } catch (e: Exception) { Log.w(logTag, "direct HLS failed: ${e.message}") }
+        }
+        for (link in directMp4) {
+            try { callback(ExtractorLink(this.name, "مباشر", link, watchUrl, Qualities.Unknown.value, false)) } catch (_: Exception) {}
+        }
+        val alreadyFound = directHls.isNotEmpty() || directMp4.isNotEmpty()
+
+        var results: List<Boolean> = emptyList()
+        if (embedUrls.isNotEmpty()) {
+            results = embedUrls.toList().amap { embedUrl ->
+                try {
+                    resolveEmbedUrl(embedUrl, watchUrl, subtitleCallback, callback)
+                } catch (e: Exception) {
+                    Log.w(logTag, "resolveEmbedUrl failed ($embedUrl): ${e.message}")
+                    false
+                }
             }
         }
 
-        return results.any { it }
+        val resolvedOk = results.any { it }
+        if (alreadyFound || resolvedOk) return true
+
+        Log.w(logTag, "HTTP embed stages empty for $watchUrl. Falling back to WebViewResolver.")
+        val triggerJs = """
+            (function() {
+                function clickAll() {
+                    ['.play-button','.btn-play','.vjs-big-play-button','.jw-icon-display','button.play','#play','a.play',
+                     '.servers-list li','.server-list li','ul.servers li','.tab-server','.epss','button.watch',
+                     '[data-server]','a[href*="/watch"]','.watch-server','.switch-server','.player-big-play',
+                     '.btn-watch','.btn-primary','.btn.success'].forEach(function(s){
+                        try { var e = document.querySelector(s); if(e && typeof e.click === 'function') { e.click(); } } catch(_) {}
+                    });
+                    var vs = document.querySelectorAll('video');
+                    vs.forEach(function(v){ try { v.muted = true; var p = v.play(); if (p && typeof p.catch === 'function') p.catch(function(){}); } catch(_){} });
+                    var ifs = document.querySelectorAll('iframe');
+                    ifs.forEach(function(f){ try { f.contentWindow && f.contentWindow.postMessage && f.contentWindow.postMessage('play','*'); } catch(_){} });
+                }
+                clickAll();
+                setInterval(clickAll, 500);
+                setTimeout(function(){ clickAll(); }, 1000);
+                setTimeout(function(){ clickAll(); }, 2000);
+                setTimeout(function(){ clickAll(); }, 3500);
+            })();
+        """.trimIndent()
+        val targetsToTry = listOfNotNull(
+            watchUrl,
+            watchUrl.takeIf { it != data },
+            data.takeIf { data != watchUrl }
+        ).distinct()
+        for (t in targetsToTry) {
+            try {
+                Log.d(logTag, "WebViewResolver trying: $t")
+                val resolver = WebViewResolver(
+                    interceptUrl = Regex(""".*(\.m3u8.*|\.mp4.*|/hls/.*|master\.m3u8.*|playlist\.m3u8.*|fastvid|fastved|earnvids|d0000d|ok\.ru|mail\.ru|videa\.hu|uptobox|mixdrop|dood)""", RegexOption.IGNORE_CASE),
+                    script = triggerJs
+                )
+                val intercepted = resolver.resolveUsingWebView(
+                    requestCreator("GET", t, referer = t, headers = buildMergedHeaders(t, data).plus("User-Agent" to ua))
+                )
+                val webUrl = intercepted.first?.url?.toString()
+                Log.d(logTag, "WebViewResolver($t) got: $webUrl")
+                if (!webUrl.isNullOrBlank()) {
+                    val lurl = webUrl.lowercase()
+                    if (lurl.contains(".m3u8") || lurl.contains("/hls/")) {
+                        M3u8Helper.generateM3u8(
+                            this.name, webUrl, referer = watchUrl,
+                            headers = mapOf("User-Agent" to ua, "Referer" to watchUrl)
+                        ).forEach(callback)
+                        return true
+                    } else if (lurl.endsWith(".mp4") || lurl.contains(".mp4?")) {
+                        callback(ExtractorLink(this.name, "مباشر", webUrl, watchUrl, Qualities.Unknown.value, false))
+                        return true
+                    } else if (loadExtractor(webUrl, referer = watchUrl, subtitleCallback, callback)) {
+                        return true
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(logTag, "WebViewResolver failed($t): ${e.message}")
+            }
+        }
+        return false
     }
 
     private fun isCanaryServer(name: String?, rank: Int?, url: String?): Boolean {
@@ -400,6 +531,41 @@ class Shahid4u : MainAPI() {
         return u.contains("/media/watch/") || u.contains("/media/api/") || u.contains("/media/page/")
     }
 
+    private fun relaxedJsObjectToUrlList(rawBlock: String): List<Triple<String, String?, Int?>> {
+        val out = mutableListOf<Triple<String, String?, Int?>>()
+        if (rawBlock.isBlank()) return out
+        try {
+            val arr = JSONArray(rawBlock)
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val url = o.optString("url").ifBlank { o.optString("src") }
+                if (url.isBlank()) continue
+                val name = o.optString("name").ifBlank { null }
+                val rank = if (o.has("rank")) o.optInt("rank", -1) else null
+                out.add(Triple(url, name, rank))
+            }
+            return out
+        } catch (_: JSONException) { }
+        val objRanges = mutableListOf<Pair<Int, Int>>()
+        var depth = 0; var start = -1
+        for (i in rawBlock.indices) {
+            val c = rawBlock[i]
+            if (c == '{') { if (depth == 0) start = i; depth++ }
+            else if (c == '}') { depth--; if (depth == 0 && start >= 0) objRanges.add(start to i); start = -1 }
+        }
+        val urlRe = Regex("""(?:url|src|link|embed)\s*[:=]\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+        val nameRe = Regex("""(?:name|title|label)\s*[:=]\s*['"]([^'"]*)['"]""", RegexOption.IGNORE_CASE)
+        val rankRe = Regex("""(?:rank|priority)\s*[:=]\s*(\d+)""", RegexOption.IGNORE_CASE)
+        for (r in objRanges) {
+            val objSlice = runCatching { rawBlock.substring(r.first, r.second + 1) }.getOrNull() ?: continue
+            val u = urlRe.find(objSlice)?.groupValues?.get(1) ?: continue
+            val n = nameRe.find(objSlice)?.groupValues?.get(1)
+            val rnk = rankRe.find(objSlice)?.groupValues?.get(1)?.toIntOrNull()
+            out.add(Triple(u, n, rnk))
+        }
+        return out
+    }
+
     private fun parseServersArrayFromHtml(html: String): List<String> {
         val out = linkedSetOf<String>()
         val cleaned = html
@@ -407,41 +573,26 @@ class Shahid4u : MainAPI() {
             .replace("&#039;", "'")
             .replace("&amp;", "&")
 
-        val letServersRegex = Regex("""let\s+servers\s*=\s*(\[[\s\S]*?\])\s*[;\n]""")
-        val serversMatch = letServersRegex.find(cleaned)
-        if (serversMatch != null) {
-            try {
-                val array = JSONArray(serversMatch.groupValues[1])
-                for (i in 0 until array.length()) {
-                    val obj = array.optJSONObject(i) ?: continue
-                    val url = obj.optString("url").ifBlank { obj.optString("src") }
-                    val name = obj.optString("name")
-                    val rank = obj.optInt("rank", 0)
-                    if (url.isNotBlank() && !isCanaryServer(name, rank, url)) {
-                        val absUrl = makeAbsoluteUrl(url)
-                        if (absUrl != null) out.add(absUrl)
-                    }
+        val varRegex = Regex("""(?:let|const|var)\s+(?:servers|player_servers|list_servers|hosts|watches|items)\s*=\s*(\[[\s\S]*?\])\s*[;\n]""")
+        for (match in varRegex.findAll(cleaned)) {
+            val block = match.groupValues[1]
+            relaxedJsObjectToUrlList(block).forEach { (u, n, r) ->
+                if (u.isNotBlank() && !isCanaryServer(n, r, u)) {
+                    val absUrl = makeAbsoluteUrl(u)
+                    if (absUrl != null) out.add(absUrl)
                 }
-            } catch (e: JSONException) {
-                Log.w(logTag, "parseServersArrayFromHtml -> could not parse servers array: ${e.message}")
             }
         }
 
-        val constServersRegex = Regex("""(?:const|var)\s+servers\s*=\s*(\[[\s\S]*?\])\s*[;\n]""")
-        for (match in constServersRegex.findAll(cleaned)) {
-            try {
-                val array = JSONArray(match.groupValues[1])
-                for (i in 0 until array.length()) {
-                    val obj = array.optJSONObject(i) ?: continue
-                    val url = obj.optString("url").ifBlank { obj.optString("src") }
-                    val name = obj.optString("name")
-                    val rank = obj.optInt("rank", 0)
-                    if (url.isNotBlank() && !isCanaryServer(name, rank, url)) {
-                        val absUrl = makeAbsoluteUrl(url)
-                        if (absUrl != null) out.add(absUrl)
-                    }
+        val windowRegex = Regex("""(?:window|document)\.?(?:servers|player_servers|list_servers)\s*=\s*(\[[\s\S]*?\])\s*[;\n]""")
+        for (match in windowRegex.findAll(cleaned)) {
+            val block = match.groupValues[1]
+            relaxedJsObjectToUrlList(block).forEach { (u, n, r) ->
+                if (u.isNotBlank() && !isCanaryServer(n, r, u)) {
+                    val absUrl = makeAbsoluteUrl(u)
+                    if (absUrl != null) out.add(absUrl)
                 }
-            } catch (_: JSONException) { }
+            }
         }
 
         return out.toList()

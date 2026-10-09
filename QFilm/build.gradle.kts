@@ -1,4 +1,4 @@
-version = 1
+version = 2
 
 cloudstream {
     description = "كيو فيلم - أفلام ومسلسلات من a.qfilm.tv"

@@ -12,6 +12,7 @@ import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.nicehttp.requestCreator
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
+import java.net.URI
 
 class QFilm : MainAPI() {
     override var mainUrl = "https://a.qfilm.tv"
@@ -60,6 +61,42 @@ class QFilm : MainAPI() {
             .replace(Regex("\\s+-\\s+$name\\s*$", RegexOption.IGNORE_CASE), "")
             .replace(Regex("\\s+-\\s+كيو فيلم\\s*$"), "")
             .trim()
+    }
+
+    private fun validateVideoUrl(u: String?): Boolean {
+        if (u.isNullOrBlank()) return false
+        try {
+            val uri = URI(u)
+            val scheme = uri.scheme?.lowercase()
+            if (scheme != "http" && scheme != "https") return false
+            val host = uri.host?.lowercase() ?: return false
+            if (host.isBlank()) return false
+            val hostBlacklist = listOf(
+                "data:", "localhost", "127.0.0.1", "0.0.0.0", "example.com", "invalid",
+                "cdn.cloudflare.com", "placeholder", "xbeat.space", "cloudflareinsights",
+                "agl.","dtscdn.com","dtscout.com","onaudience.com","histats.com","mrktmtrcs"
+            )
+            for (b in hostBlacklist) if (host.contains(b)) return false
+            val p = u.lowercase()
+            if (!p.contains(".m3u8") && !p.contains("/hls/") && !p.endsWith(".mp4") &&
+                !p.contains(".mp4?") && !p.endsWith(".webm") && !p.endsWith(".mkv") &&
+                !p.endsWith(".jpg") && !p.endsWith(".png")) {
+                val knownHosts = listOf(
+                    "ok.ru","mail.ru","my.mail.ru","videa.hu","mixdrop.co","dood.watch","dood.so","dood.pm",
+                    "d0000d.com","uptobox.com","uptostream.com","fastvid.cam","fastved.cam",
+                    "earnvids","fdewsdc","vidstreaming","vidcloud","streamtape","streamwish",
+                    "filemoon","luluvdo","kwik","sendvid","userload","u.pstream","mp4upload",
+                    "vupload","hydrax","asianload","gogo","playhydrax","sbplay","speedfiles",
+                    "akamaicdn.cloudflare","storage"
+                )
+                var known = false
+                for (kh in knownHosts) if (host.contains(kh)) { known = true; break }
+                if (!known && p.length < 40) return false
+            }
+            return true
+        } catch (e: Exception) {
+            return false
+        }
     }
 
     private fun parseCardFromThumbLink(link: Element, posterAnchor: Element?): SearchResponse? {
@@ -470,23 +507,25 @@ class QFilm : MainAPI() {
         val directMp4 = linkedSetOf<String>()
 
         try {
-            val watchResp = app.get(watchUrl, referer = "$mainUrl/", headers = mapOf("User-Agent" to ua, "Accept" to "text/html,application/xhtml+xml"))
+            val watchResp = app.get(watchUrl, referer = "$mainUrl/", headers = mapOf("User-Agent" to ua, "Accept" to "text/html,application/xhtml+xml"), timeout = 15)
             val watchDoc = watchResp.document
             val watchHtml = watchResp.text
             collectEmbedsFromDoc(watchDoc, embeds, lowerPriorityEmbeds)
             val (wm, wp) = scanInlinePlayerJs(watchHtml)
-            wm.forEach { if (!directM3u8.contains(it)) directM3u8.add(it) }
-            wp.forEach { if (!directMp4.contains(it)) directMp4.add(it) }
-            watchDoc.select("a[href], button[data-ajax], .servers a, .server a, li.server, div.server-item, ul.servers-list li, .tabs--servers a, ul.nav-tabs a[data-server]").forEach { el ->
+            wm.filter(::validateVideoUrl).forEach { if (!directM3u8.contains(it)) directM3u8.add(it) }
+            wp.filter(::validateVideoUrl).forEach { if (!directMp4.contains(it)) directMp4.add(it) }
+            watchDoc.select("a[href], button[data-ajax], .servers a, .server a, li.server, div.server-item, ul.servers-list li, .tabs--servers a, ul.nav-tabs a[data-server], .bib-player-server, .servers-tab, a.server-switch, button.server").forEach { el ->
                 val href = el.attrOrAbs("href").ifBlank { el.attr("data-url") }
                     .ifBlank { el.attr("data-src") }.ifBlank { el.attr("data-embed") }
+                    .ifBlank { el.attr("data-player") }
                 if (href.isBlank() || href == "#" || href.lowercase().startsWith("javascript:")) return@forEach
                 val abs = makeAbsoluteUrl(href) ?: return@forEach
+                if (!validateVideoUrl(abs)) return@forEach
                 val lv = abs.lowercase()
                 if (isTrackedAsset(abs)) return@forEach
                 if (lv.contains(".m3u8") || lv.contains("/hls/")) {
                     if (!directM3u8.contains(abs)) directM3u8.add(abs)
-                } else if (lv.endsWith(".mp4") || lv.contains(".mp4?")) {
+                } else if (lv.endsWith(".mp4") || lv.contains(".mp4?") || lv.endsWith(".webm")) {
                     if (!directMp4.contains(abs)) directMp4.add(abs)
                 } else {
                     if (!embeds.contains(abs) && !lowerPriorityEmbeds.contains(abs)) embeds.add(abs)
@@ -502,33 +541,59 @@ class QFilm : MainAPI() {
                 val playResp = app.get(
                     playUrl,
                     referer = watchUrl,
-                    headers = mapOf("User-Agent" to ua, "Accept" to "text/html,application/xhtml+xml")
+                    headers = mapOf("User-Agent" to ua, "Accept" to "text/html,application/xhtml+xml"),
+                    timeout = 15
                 )
                 val playDoc = playResp.document
                 val playHtml = playResp.text
                 collectEmbedsFromDoc(playDoc, embeds, lowerPriorityEmbeds)
                 val (pm, pp) = scanInlinePlayerJs(playHtml)
-                pm.forEach { if (!directM3u8.contains(it)) directM3u8.add(it) }
-                pp.forEach { if (!directMp4.contains(it)) directMp4.add(it) }
-                Log.d(logTag, "play.php scan -> m3u8=$pm mp4=$pp embeds addtl=${embeds.size - (embeds.size)}")
+                pm.filter(::validateVideoUrl).forEach { if (!directM3u8.contains(it)) directM3u8.add(it) }
+                pp.filter(::validateVideoUrl).forEach { if (!directMp4.contains(it)) directMp4.add(it) }
+                playDoc.select("a[href], button[data-ajax], .servers a, li.server, div.server-item, ul.servers-list li, .bib-player-server, a.server-switch").forEach { el ->
+                    val href = el.attrOrAbs("href").ifBlank { el.attr("data-url") }
+                        .ifBlank { el.attr("data-src") }.ifBlank { el.attr("data-embed") }.ifBlank { el.attr("data-player") }
+                    if (href.isBlank() || href == "#" || href.lowercase().startsWith("javascript:")) return@forEach
+                    val abs = makeAbsoluteUrl(href) ?: return@forEach
+                    if (!validateVideoUrl(abs)) return@forEach
+                    val lv = abs.lowercase()
+                    if (isTrackedAsset(abs)) return@forEach
+                    if (lv.contains(".m3u8") || lv.contains("/hls/")) {
+                        if (!directM3u8.contains(abs)) directM3u8.add(abs)
+                    } else if (lv.endsWith(".mp4") || lv.contains(".mp4?")) {
+                        if (!directMp4.contains(abs)) directMp4.add(abs)
+                    } else {
+                        if (!embeds.contains(abs) && !lowerPriorityEmbeds.contains(abs)) embeds.add(abs)
+                    }
+                }
+                Log.d(logTag, "play.php scan -> m3u8=$pm mp4=$pp embeds total=${embeds.size}")
             } catch (e: Exception) {
                 Log.w(logTag, "play.php fetch failed: ${e.message}")
             }
         }
 
+        val embedsClean = embeds.filter(::validateVideoUrl).toSet().toList()
+        val lpClean = lowerPriorityEmbeds.filter(::validateVideoUrl).filter { !embedsClean.contains(it) }
+        val m3u8Clean = directM3u8.filter(::validateVideoUrl).toList()
+        val mp4Clean = directMp4.filter(::validateVideoUrl).toList()
+        Log.d(logTag, "POST-VALIDATION: m3u8=${m3u8Clean.size} mp4=${mp4Clean.size} embeds=${embedsClean.size}")
+
         var found = false
-        for (link in directM3u8) {
+        for (link in m3u8Clean) {
             try {
-                M3u8Helper.generateM3u8(
+                val emitted = M3u8Helper.generateM3u8(
                     this.name,
                     link,
                     referer = watchUrl,
                     headers = mapOf("User-Agent" to ua, "Referer" to watchUrl)
-                ).forEach(callback)
-                found = true
+                ).onEach(callback).toList()
+                if (emitted.isNotEmpty()) {
+                    Log.d(logTag, "Emitted ${emitted.size} HLS variants from $link")
+                    found = true
+                }
             } catch (e: Exception) { Log.w(logTag, "m3u8 failed ($link): ${e.message}") }
         }
-        for (link in directMp4) {
+        for (link in mp4Clean) {
             try {
                 callback(
                     ExtractorLink(
@@ -544,16 +609,16 @@ class QFilm : MainAPI() {
             } catch (e: Exception) { Log.w(logTag, "mp4 failed ($link): ${e.message}") }
         }
 
-        val ordered = embeds.toList() + lowerPriorityEmbeds.toList()
+        val ordered = embedsClean + lpClean
         for (embed in ordered) {
             try {
                 val l = embed.lowercase()
                 val isHls = l.contains(".m3u8") || l.contains("/hls/")
-                val isMp4 = l.endsWith(".mp4") || l.contains(".mp4?")
+                val isMp4 = l.endsWith(".mp4") || l.contains(".mp4?") || l.endsWith(".webm")
                 if (isHls) {
                     if (directM3u8.contains(embed)) continue
-                    M3u8Helper.generateM3u8(this.name, embed, referer = watchUrl, headers = mapOf("User-Agent" to ua)).forEach(callback)
-                    found = true
+                    val emitted = M3u8Helper.generateM3u8(this.name, embed, referer = watchUrl, headers = mapOf("User-Agent" to ua, "Referer" to watchUrl)).onEach(callback).toList()
+                    if (emitted.isNotEmpty()) found = true
                     continue
                 }
                 if (isMp4) {
@@ -570,7 +635,10 @@ class QFilm : MainAPI() {
             }
         }
 
-        if (found) return true
+        if (found) {
+            Log.d(logTag, "loadLinks success (HTTP path)")
+            return true
+        }
 
         Log.w(logTag, "HTTP stages empty, falling back to WebViewResolver (watchUrl first)")
         if (tryWebViewResolve(watchUrl, watchUrl, ua, callback)) return true
