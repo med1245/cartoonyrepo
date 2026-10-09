@@ -1,4 +1,8 @@
-version = 3
+dependencies {
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+}
+
+version = 4
 
 cloudstream {
     description = "كيو فيلم - أفلام ومسلسلات من a.qfilm.tv"

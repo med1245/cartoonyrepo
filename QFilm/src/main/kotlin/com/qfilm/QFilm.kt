@@ -13,6 +13,7 @@ import com.lagradost.nicehttp.requestCreator
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
 import java.net.URI
+import kotlinx.coroutines.withTimeout
 
 class QFilm : MainAPI() {
     override var mainUrl = "https://a.qfilm.tv"
@@ -433,6 +434,7 @@ class QFilm : MainAPI() {
         targetUrl: String,
         refererUrl: String,
         ua: String,
+        providerName: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         Log.d(logTag, "tryWebViewResolve -> $targetUrl")
@@ -457,68 +459,70 @@ class QFilm : MainAPI() {
             })();
         """.trimIndent()
         return try {
-            val resolver = WebViewResolver(
-                interceptUrl = Regex(""".*(\.m3u8.*|\.mp4.*|/hls/.*|/manifest/.*|master\.m3u8.*|playlist\.m3u8.*)""", RegexOption.IGNORE_CASE),
-                script = triggerJs
-            )
-            val intercepted = resolver.resolveUsingWebView(
-                requestCreator(
-                    method = "GET",
-                    url = targetUrl,
-                    referer = refererUrl,
-                    headers = mapOf(
-                        "User-Agent" to ua,
-                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-                    )
-                )
-            )
-            val webUrl = intercepted.first?.url?.toString()
-            Log.d(logTag, "WebViewResolver intercepted URL: $webUrl")
-            if (!webUrl.isNullOrBlank() && (webUrl.contains(".m3u8") || webUrl.contains("/hls/") || webUrl.contains("master.m3u8") || webUrl.contains("playlist.m3u8"))) {
-                M3u8Helper.generateM3u8(
-                    this.name,
-                    webUrl,
-                    referer = refererUrl,
-                    headers = mapOf("User-Agent" to ua, "Referer" to refererUrl)
-                ).forEach(callback)
-                true
-            } else if (!webUrl.isNullOrBlank() && (webUrl.lowercase().endsWith(".mp4") || webUrl.contains(".mp4?"))) {
-                callback(
-                    ExtractorLink(
-                        this.name,
-                        "مباشر",
-                        webUrl,
-                        refererUrl,
-                        Qualities.Unknown.value,
-                        false
-                    )
-                )
-                true
-            } else {
-                Log.w(logTag, "WebViewResolver did not yield video URL. Trying catch-all regex.")
-                val catchAllResolver = WebViewResolver(
-                    interceptUrl = Regex(""".*"""),
+            withTimeout(20000) { // 20 second timeout to prevent infinite loop
+                val resolver = WebViewResolver(
+                    interceptUrl = Regex(""".*(\.m3u8.*|\.mp4.*|/hls/.*|/manifest/.*|master\.m3u8.*|playlist\.m3u8.*)""", RegexOption.IGNORE_CASE),
                     script = triggerJs
                 )
-                val catchAll = catchAllResolver.resolveUsingWebView(
+                val intercepted = resolver.resolveUsingWebView(
                     requestCreator(
-                        "GET", targetUrl, referer = refererUrl,
-                        headers = mapOf("User-Agent" to ua)
+                        method = "GET",
+                        url = targetUrl,
+                        referer = refererUrl,
+                        headers = mapOf(
+                            "User-Agent" to ua,
+                            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                        )
                     )
                 )
-                val caUrl = catchAll.first?.url?.toString()
-                Log.d(logTag, "Catch-all intercepted: $caUrl")
-                if (!caUrl.isNullOrBlank() && (caUrl.contains(".m3u8") || caUrl.contains("/hls/"))) {
+                val webUrl = intercepted.first?.url?.toString()
+                Log.d(logTag, "WebViewResolver intercepted URL: $webUrl")
+                if (!webUrl.isNullOrBlank() && (webUrl.contains(".m3u8") || webUrl.contains("/hls/") || webUrl.contains("master.m3u8") || webUrl.contains("playlist.m3u8"))) {
                     M3u8Helper.generateM3u8(
-                        this.name, caUrl, referer = refererUrl,
+                        providerName,
+                        webUrl,
+                        referer = refererUrl,
                         headers = mapOf("User-Agent" to ua, "Referer" to refererUrl)
                     ).forEach(callback)
                     true
-                } else if (!caUrl.isNullOrBlank() && (caUrl.lowercase().endsWith(".mp4") || caUrl.contains(".mp4?"))) {
-                    callback(ExtractorLink(this.name, "مباشر", caUrl, refererUrl, Qualities.Unknown.value, false))
+                } else if (!webUrl.isNullOrBlank() && (webUrl.lowercase().endsWith(".mp4") || webUrl.contains(".mp4?"))) {
+                    callback(
+                        ExtractorLink(
+                            providerName,
+                            "مباشر",
+                            webUrl,
+                            refererUrl,
+                            Qualities.Unknown.value,
+                            false
+                        )
+                    )
                     true
                 } else {
-                    false
+                    Log.w(logTag, "WebViewResolver did not yield video URL. Trying catch-all regex.")
+                    val catchAllResolver = WebViewResolver(
+                        interceptUrl = Regex(""".*"""),
+                        script = triggerJs
+                    )
+                    val catchAll = catchAllResolver.resolveUsingWebView(
+                        requestCreator(
+                            "GET", targetUrl, referer = refererUrl,
+                            headers = mapOf("User-Agent" to ua)
+                        )
+                    )
+                    val caUrl = catchAll.first?.url?.toString()
+                    Log.d(logTag, "Catch-all intercepted: $caUrl")
+                    if (!caUrl.isNullOrBlank() && (caUrl.contains(".m3u8") || caUrl.contains("/hls/"))) {
+                        M3u8Helper.generateM3u8(
+                            providerName, caUrl, referer = refererUrl,
+                            headers = mapOf("User-Agent" to ua, "Referer" to refererUrl)
+                        ).forEach(callback)
+                        true
+                    } else if (!caUrl.isNullOrBlank() && (caUrl.lowercase().endsWith(".mp4") || caUrl.contains(".mp4?"))) {
+                        callback(ExtractorLink(providerName, "مباشر", caUrl, refererUrl, Qualities.Unknown.value, false))
+                        true
+                    } else {
+                        false
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -680,16 +684,16 @@ class QFilm : MainAPI() {
         }
 
         Log.w(logTag, "HTTP stages empty, falling back to WebViewResolver (watchUrl first)")
-        if (tryWebViewResolve(watchUrl, watchUrl, ua, callback)) return true
+        if (tryWebViewResolve(watchUrl, watchUrl, ua, this.name, callback)) return true
 
         if (!vid.isNullOrBlank() && playUrl != watchUrl) {
             Log.w(logTag, "Watch URL WebView failed, trying play.php WebView: $playUrl")
-            if (tryWebViewResolve(playUrl, watchUrl, ua, callback)) return true
+            if (tryWebViewResolve(playUrl, watchUrl, ua, this.name, callback)) return true
         }
 
         for (embed in ordered.take(4)) {
             Log.w(logTag, "Direct embed WebView fallback: $embed")
-            if (tryWebViewResolve(embed, watchUrl, ua, callback)) return true
+            if (tryWebViewResolve(embed, watchUrl, ua, this.name, callback)) return true
         }
 
         Log.e(logTag, "All stages failed for: $data")
