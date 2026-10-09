@@ -229,6 +229,9 @@ class QFilm : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
+        Log.d(logTag, "=== LOAD FUNCTION CALLED ===")
+        Log.d(logTag, "Loading URL: $url")
+        
         val doc = app.get(url, referer = "$mainUrl/").document
 
         val ogTitle = doc.selectFirst("meta[property=og:title]")?.attr("content")
@@ -286,6 +289,8 @@ class QFilm : MainAPI() {
             url.contains("anime", true) || tags.any { it.contains("انمي") || it.contains("أنمي") }
         val type = if (isAnime) TvType.Anime else TvType.Movie
 
+        Log.d(logTag, "Load complete - Title: $title, Type: $type, Returning URL: $url")
+        
         return newMovieLoadResponse(title, url, type, url) {
             this.posterUrl = poster
             this.posterHeaders = posterHeaders()
