@@ -4,10 +4,12 @@ package com.qfilm
 
 import android.util.Log
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
+import okhttp3.Interceptor
 
 class QFilm : MainAPI() {
     override var mainUrl = "https://a.qfilm.tv"
@@ -16,6 +18,9 @@ class QFilm : MainAPI() {
     override var lang = "ar"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
     override val usesWebView = true
+    
+    private val cloudflareKiller by lazy { CloudflareKiller() }
+    private val cfInterceptor: Interceptor get() = cloudflareKiller
 
     override val mainPage = mainPageOf(
         "$mainUrl/newvideos.php?page=" to "جديد الموقع",
@@ -23,7 +28,16 @@ class QFilm : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = request.data + page
-        val doc = app.get(url, referer = "$mainUrl/").document
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        )
+        val doc = app.get(
+            url, 
+            referer = "$mainUrl/",
+            headers = headers,
+            interceptor = cfInterceptor,
+            timeout = 30
+        ).document
         val items = doc.select("a[href*=watch]").take(20).mapNotNull { el ->
             val href = el.attr("href").ifBlank { el.attr("data-url") }
             val title = el.attr("title").ifBlank { el.text() }
@@ -40,7 +54,16 @@ class QFilm : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val url = "$mainUrl/search.php?keywords=${URLEncoder.encode(query, "UTF-8")}"
-        val doc = app.get(url, referer = "$mainUrl/").document
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        )
+        val doc = app.get(
+            url, 
+            referer = "$mainUrl/",
+            headers = headers,
+            interceptor = cfInterceptor,
+            timeout = 30
+        ).document
         return doc.select("a[href*=watch]").mapNotNull { el ->
             val href = el.attr("href").ifBlank { return@mapNotNull null }
             val title = el.attr("title").ifBlank { el.text() }.ifBlank { return@mapNotNull null }
@@ -53,8 +76,24 @@ class QFilm : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         Log.e("QFilmProvider", "🔴 LOAD CALLED: $url")
-        val doc = app.get(url, referer = "$mainUrl/").document
-        val title = doc.selectFirst("h1, h2, .title")?.text()?.trim() ?: "Unknown"
+        println("🔴 LOAD: $url")
+        
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language" to "ar,en;q=0.9",
+            "Cache-Control" to "no-cache"
+        )
+        
+        val doc = app.get(
+            url, 
+            referer = "$mainUrl/",
+            headers = headers,
+            interceptor = cfInterceptor,
+            timeout = 30
+        ).document
+        
+        val title = doc.selectFirst("h1, h2, .title, [class*=title]")?.text()?.trim() ?: "Unknown"
         val poster = doc.selectFirst("meta[property=og:image]")?.attr("content")
         val plot = doc.selectFirst("meta[name=description]")?.attr("content")
         
@@ -71,60 +110,61 @@ class QFilm : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         Log.e("QFilmProvider", "🟢 LOADLINKS CALLED: $data")
-        
-        // Add test link
-        callback(
-            ExtractorLink(
-                "QFilm-TEST",
-                "🔴 TEST LINK - CALLBACK WORKS!",
-                "https://test.com/test.mp4",
-                "",
-                Qualities.Unknown.value,
-                false
-            )
-        )
+        println("🟢 LOADLINKS: $data")
         
         try {
-            val doc = app.get(data, referer = "$mainUrl/").document
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            )
             
-            // Try to find video links
-            doc.select("a[href*=.mp4], a[href*=.m3u8]").forEach { link ->
-                val href = link.attr("href")
-                if (href.isNotBlank() && (href.contains(".mp4") || href.contains(".m3u8"))) {
-                    callback(
-                        ExtractorLink(
-                            "QFilm",
-                            "مباشر",
-                            href,
-                            data,
-                            Qualities.Unknown.value,
-                            false
-                        )
-                    )
+            val doc = app.get(
+                data, 
+                referer = "$mainUrl/",
+                headers = headers,
+                interceptor = cfInterceptor,
+                timeout = 30
+            ).document
+            
+            var foundCount = 0
+            
+            // Find all video/stream links
+            doc.select("a, iframe, source, [data-url], [data-src], [data-link]").forEach { el ->
+                val url = el.attr("href").ifBlank { 
+                    el.attr("src").ifBlank { 
+                        el.attr("data-url").ifBlank { 
+                            el.attr("data-src").ifBlank { el.attr("data-link") }
+                        }
+                    }
                 }
-            }
-            
-            // Try iframe sources
-            doc.select("iframe").forEach { iframe ->
-                val src = iframe.attr("src")
-                if (src.isNotBlank()) {
+                
+                if (url.isNotBlank() && (url.contains(".mp4") || url.contains(".m3u8") || url.contains("watch") || url.contains("play"))) {
+                    val title = el.attr("title").ifBlank { el.text().take(50) }
                     callback(
                         ExtractorLink(
                             "QFilm",
-                            "Embedded",
-                            src,
+                            title.ifBlank { "مباشر" },
+                            url,
                             data,
                             Qualities.Unknown.value,
                             false,
-                            headers = mapOf("User-Agent" to "Mozilla/5.0")
+                            headers = mapOf(
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                "Referer" to data
+                            )
                         )
                     )
+                    foundCount++
                 }
             }
+            
+            Log.d("QFilmProvider", "Found $foundCount links")
+            println("✅ Found $foundCount links")
+            return foundCount > 0
         } catch (e: Exception) {
-            Log.e("QFilmProvider", "Error in loadLinks: ${e.message}")
+            Log.e("QFilmProvider", "Error in loadLinks: ${e.message}", e)
+            println("❌ Error: ${e.message}")
+            return false
         }
-        
-        return true
     }
 }
