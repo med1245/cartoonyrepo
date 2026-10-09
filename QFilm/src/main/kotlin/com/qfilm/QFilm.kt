@@ -229,6 +229,7 @@ class QFilm : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
+        println("!!! QFilm LOAD START: $url")
         Log.d(logTag, "=== LOAD FUNCTION CALLED ===")
         Log.d(logTag, "Loading URL: $url")
         
@@ -542,8 +543,26 @@ class QFilm : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        println("!!! QFilm LOADLINKS START: $data")
         Log.d(logTag, "=== loadLinks START ===")
         Log.d(logTag, "Input data URL: $data")
+        
+        // Add a test link immediately to see if callback works
+        try {
+            callback(
+                ExtractorLink(
+                    "QFilm-TEST",
+                    "TEST LINK - If you see this, callback works!",
+                    "https://test.com/test.mp4",
+                    "",
+                    Qualities.Unknown.value,
+                    false
+                )
+            )
+            Log.d(logTag, "Test link added successfully")
+        } catch (e: Exception) {
+            Log.e(logTag, "Test link FAILED: ${e.message}", e)
+        }
         
         val vid = extractVid(data)
         Log.d(logTag, "Extracted vid: $vid")
