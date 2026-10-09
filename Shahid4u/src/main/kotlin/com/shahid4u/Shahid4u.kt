@@ -15,6 +15,7 @@ import org.json.JSONObject
 import org.jsoup.nodes.Element
 import android.util.Log
 import java.net.URI
+import java.net.URLDecoder
 import java.net.URLEncoder
 
 class Shahid4u : MainAPI() {
@@ -161,7 +162,7 @@ class Shahid4u : MainAPI() {
     }
 
     private fun parseCard(element: Element): SearchResponse? {
-        val linkElement = element.selectFirst("a.show.card, a.glide_post, a")
+        val linkElement = element.selectFirst("a.show-card, a.show.card, a.glide_post, a")
         if (linkElement == null) return null
 
         val href = linkElement.attr("href").ifBlank { linkElement.absUrl("href") }
@@ -174,6 +175,7 @@ class Shahid4u : MainAPI() {
         } else {
             element.selectFirst("div.card-content")?.text()?.trim()
                 ?: element.selectFirst("h3")?.text()?.trim()
+                ?: element.selectFirst("img")?.attr("alt")?.trim()
                 ?: linkElement.attr("title").trim()
         }
         if (title.isNullOrBlank()) return null
@@ -181,6 +183,7 @@ class Shahid4u : MainAPI() {
         val posterStyle = linkElement.attr("style")
         var posterUrl = Regex("""url\(['"]?(.*?)['"]?\)""").find(posterStyle)?.groupValues?.get(1)
         if (posterUrl.isNullOrBlank()) posterUrl = element.selectFirst("img")?.attr("data-src")?.trim()
+        if (posterUrl.isNullOrBlank()) posterUrl = element.selectFirst("img")?.attr("data-lazy-src")?.trim()
         if (posterUrl.isNullOrBlank()) posterUrl = element.selectFirst("img")?.attr("src")?.trim()
         posterUrl = makeAbsoluteUrl(posterUrl) ?: TRANSPARENT_PNG_DATA_URI
 
@@ -257,9 +260,22 @@ class Shahid4u : MainAPI() {
         return newHomePageResponse(homePageList)
     }
 
+    private fun fallbackTitleFromUrl(url: String): String? {
+        return runCatching {
+            val slug = URI(url).path.substringAfterLast('/').trim()
+            if (slug.isBlank()) return@runCatching null
+            URLDecoder.decode(slug, "UTF-8")
+                .replace('-', ' ')
+                .replace(Regex("""\s+"""), " ")
+                .trim()
+                .takeIf { it.isNotBlank() }
+        }.getOrNull()
+    }
+
     override suspend fun search(query: String): List<SearchResponse> {
         val encoded = URLEncoder.encode(query, "UTF-8")
         val searchUrl = "${mainUrl}search?s=$encoded"
+
 
         return try {
             val document = httpGet(searchUrl, referer = mainUrl)
@@ -282,18 +298,25 @@ class Shahid4u : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         val document = httpGet(url)
 
-        val title = document.selectFirst("span.title, h1.title")?.text()?.trim()
+        val title = document.selectFirst("span.title, h1.title, h1, [itemprop='name'], meta[name='twitter:title']")?.let {
+            if (it.tagName().equals("meta", true)) it.attr("content") else it.text()
+        }?.trim()
             ?: document.selectFirst("meta[property='og:title']")?.attr("content")
                 ?.replace("- Shahid4u", "", ignoreCase = true)
                 ?.replace("- شاهد فور يو", "", ignoreCase = true)?.trim()
             ?: document.selectFirst("title")?.text()
                 ?.replace("- Shahid4u", "", ignoreCase = true)
                 ?.replace("- شاهد فور يو", "", ignoreCase = true)?.trim()
+            ?: fallbackTitleFromUrl(url)
             ?: "غير متوفر"
 
         val posterStyle = document.selectFirst("div.poster-side div.poster, div.poster")?.attr("style").orEmpty()
         val posterRaw = document.selectFirst("div.poster-side img")?.attr("src")
             ?: document.selectFirst("div.poster img")?.attr("src")
+            ?: document.selectFirst("img[itemprop='image']")?.attr("src")
+            ?: document.selectFirst("meta[itemprop='image']")?.attr("content")
+            ?: document.selectFirst("meta[itemprop='thumbnailUrl']")?.attr("content")
+            ?: document.selectFirst("link[rel='image_src']")?.attr("href")
             ?: Regex("""--background-image-url:\s*url\(['"]?(.*?)['"]?\)""")
                 .find(posterStyle)?.groupValues?.get(1)
             ?: Regex("""url\(['"]?(.*?)['"]?\)""").find(posterStyle)?.groupValues?.get(1)
@@ -301,7 +324,9 @@ class Shahid4u : MainAPI() {
             ?: document.selectFirst("meta[name='twitter:image']")?.attr("content")
         val poster = makeAbsoluteUrl(posterRaw)
 
-        val plot = document.selectFirst("span.description, .description, .entry-content p, .story-content, div.story, .movie-story p, p.plot, .summary")?.text()?.trim()
+        val plot = document.selectFirst("span.description, .description, .entry-content p, .story-content, div.story, .movie-story p, p.plot, .summary, .StoryBoxText, .story-box p, [itemprop='description'], meta[itemprop='description'], .MetaDesc")?.let {
+            if (it.tagName().equals("meta", true)) it.attr("content") else it.text()
+        }?.trim()
             ?: document.selectFirst("meta[name='description']")?.attr("content")?.trim()
             ?: document.selectFirst("meta[property='og:description']")?.attr("content")?.trim()
         val tags = document.select("div.qualities span.q-tag a, a[href*=/category/], a[href*=/genre/]").map { it.text().trim() }.filter { it.isNotBlank() }
@@ -520,6 +545,37 @@ class Shahid4u : MainAPI() {
                 Log.w(logTag, "WebViewResolver failed($t): ${e.message}")
             }
         }
+        for (embed in embedUrls.take(4)) {
+            try {
+                Log.d(logTag, "WebViewResolver trying embed directly: $embed")
+                val resolver = WebViewResolver(
+                    interceptUrl = Regex(""".*(\.m3u8.*|\.mp4.*|/hls/.*|master\.m3u8.*|playlist\.m3u8.*|fastvid|fastved|earnvids|d0000d|ok\.ru|mail\.ru|videa\.hu|uptobox|mixdrop|dood)""", RegexOption.IGNORE_CASE),
+                    script = triggerJs
+                )
+                val intercepted = resolver.resolveUsingWebView(
+                    requestCreator("GET", embed, referer = watchUrl, headers = buildMergedHeaders(embed, watchUrl).plus("User-Agent" to ua))
+                )
+                val webUrl = intercepted.first?.url?.toString()
+                Log.d(logTag, "WebViewResolver(embed=$embed) got: $webUrl")
+                if (!webUrl.isNullOrBlank()) {
+                    val lurl = webUrl.lowercase()
+                    if (lurl.contains(".m3u8") || lurl.contains("/hls/")) {
+                        M3u8Helper.generateM3u8(
+                            this.name, webUrl, referer = watchUrl,
+                            headers = mapOf("User-Agent" to ua, "Referer" to watchUrl)
+                        ).forEach(callback)
+                        return true
+                    } else if (lurl.endsWith(".mp4") || lurl.contains(".mp4?")) {
+                        callback(ExtractorLink(this.name, "مباشر", webUrl, watchUrl, Qualities.Unknown.value, false))
+                        return true
+                    } else if (loadExtractor(webUrl, referer = watchUrl, subtitleCallback, callback)) {
+                        return true
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(logTag, "WebViewResolver embed failed($embed): ${e.message}")
+            }
+        }
         return false
     }
 
@@ -582,6 +638,14 @@ class Shahid4u : MainAPI() {
                     if (absUrl != null) out.add(absUrl)
                 }
             }
+            Regex("""https?://[^"'\\<>\s]+""", RegexOption.IGNORE_CASE).findAll(block).forEach { m ->
+                val absUrl = makeAbsoluteUrl(m.value)
+                if (absUrl != null && !isCanaryServer(null, null, absUrl)) out.add(absUrl)
+            }
+            Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).findAll(block).forEach { m ->
+                val absUrl = makeAbsoluteUrl(m.groupValues[1])
+                if (absUrl != null && !isCanaryServer(null, null, absUrl)) out.add(absUrl)
+            }
         }
 
         val windowRegex = Regex("""(?:window|document)\.?(?:servers|player_servers|list_servers)\s*=\s*(\[[\s\S]*?\])\s*[;\n]""")
@@ -592,6 +656,14 @@ class Shahid4u : MainAPI() {
                     val absUrl = makeAbsoluteUrl(u)
                     if (absUrl != null) out.add(absUrl)
                 }
+            }
+            Regex("""https?://[^"'\\<>\s]+""", RegexOption.IGNORE_CASE).findAll(block).forEach { m ->
+                val absUrl = makeAbsoluteUrl(m.value)
+                if (absUrl != null && !isCanaryServer(null, null, absUrl)) out.add(absUrl)
+            }
+            Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).findAll(block).forEach { m ->
+                val absUrl = makeAbsoluteUrl(m.groupValues[1])
+                if (absUrl != null && !isCanaryServer(null, null, absUrl)) out.add(absUrl)
             }
         }
 
@@ -607,6 +679,19 @@ class Shahid4u : MainAPI() {
             .replace("&quot;", "\"")
             .replace("&#039;", "'")
             .replace("&amp;", "&")
+
+        Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).findAll(cleaned).forEach { m ->
+            val absUrl = makeAbsoluteUrl(m.groupValues[1])
+            if (absUrl != null) out.add(absUrl)
+        }
+        Regex("""<option[^>]+value=["']([^"']+)["']""", RegexOption.IGNORE_CASE).findAll(cleaned).forEach { m ->
+            val absUrl = makeAbsoluteUrl(m.groupValues[1])
+            if (absUrl != null) out.add(absUrl)
+        }
+        Regex("""https?://[^"'\\<>\s]+""", RegexOption.IGNORE_CASE).findAll(cleaned).forEach { m ->
+            val absUrl = makeAbsoluteUrl(m.value)
+            if (absUrl != null && !isCanaryServer(null, null, absUrl)) out.add(absUrl)
+        }
 
         val jsonParseRegex = Regex("""JSON\.parse\(\s*['"]([\s\S]*?)['"]\s*\)""")
         for (match in jsonParseRegex.findAll(cleaned)) {

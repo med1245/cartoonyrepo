@@ -1,4 +1,4 @@
-version = 10
+version = 11
 
 cloudstream {
     description = "شاهد فور يو - مسلسلات وأفلام من shaheid4u.name"

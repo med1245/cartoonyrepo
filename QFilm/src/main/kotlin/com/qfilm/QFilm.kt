@@ -87,6 +87,8 @@ class QFilm : MainAPI() {
                     "earnvids","fdewsdc","vidstreaming","vidcloud","streamtape","streamwish",
                     "filemoon","luluvdo","kwik","sendvid","userload","u.pstream","mp4upload",
                     "vupload","hydrax","asianload","gogo","playhydrax","sbplay","speedfiles",
+                    "liiivideo","vidmoly","abyssplayer","mp4plus","vidspeed","anafast",
+                    "vidoba","vidara","bysetayico","uqload",
                     "akamaicdn.cloudflare","storage"
                 )
                 var known = false
@@ -370,6 +372,41 @@ class QFilm : MainAPI() {
         return m3u8s.toList() to mp4s.toList()
     }
 
+    private fun collectTargetsFromRawMarkup(
+        html: String,
+        embeds: LinkedHashSet<String>,
+        directM3u8: LinkedHashSet<String>,
+        directMp4: LinkedHashSet<String>
+    ) {
+        val cleaned = html.replace("\\/", "/").replace("&quot;", "\"").replace("&#039;", "'")
+
+        fun addTarget(raw: String) {
+            val abs = makeAbsoluteUrl(raw.trim()) ?: return
+            if (isTrackedAsset(abs) || !validateVideoUrl(abs)) return
+            val lower = abs.lowercase()
+            when {
+                lower.contains(".m3u8") || lower.contains("/hls/") || lower.contains("master.m3u8") || lower.contains("playlist.m3u8") ->
+                    directM3u8.add(abs)
+                lower.endsWith(".mp4") || lower.contains(".mp4?") || lower.endsWith(".webm") || lower.endsWith(".mkv") ->
+                    directMp4.add(abs)
+                else -> embeds.add(abs)
+            }
+        }
+
+        Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).findAll(cleaned).forEach { m ->
+            addTarget(m.groupValues[1])
+        }
+        Regex("""<option[^>]+value=["']([^"']+)["']""", RegexOption.IGNORE_CASE).findAll(cleaned).forEach { m ->
+            addTarget(m.groupValues[1])
+        }
+        Regex("""(?:src|href|value)\s*[:=]\s*["'](https?://[^"'\\<>\s]+)["']""", RegexOption.IGNORE_CASE).findAll(cleaned).forEach { m ->
+            addTarget(m.groupValues[1])
+        }
+        Regex("""https?://[^"'\\<>\s]+""", RegexOption.IGNORE_CASE).findAll(cleaned).forEach { m ->
+            addTarget(m.value)
+        }
+    }
+
     private fun collectEmbedsFromDoc(doc: org.jsoup.nodes.Document, sink: LinkedHashSet<String>, lowPriority: LinkedHashSet<String>) {
         doc.select("iframe[src]").forEach { iframe ->
             val src = iframe.attrOrAbs("src").ifBlank { iframe.attr("src") }
@@ -512,6 +549,7 @@ class QFilm : MainAPI() {
             val watchHtml = watchResp.text
             collectEmbedsFromDoc(watchDoc, embeds, lowerPriorityEmbeds)
             val (wm, wp) = scanInlinePlayerJs(watchHtml)
+            collectTargetsFromRawMarkup(watchHtml, embeds, directM3u8, directMp4)
             wm.filter(::validateVideoUrl).forEach { if (!directM3u8.contains(it)) directM3u8.add(it) }
             wp.filter(::validateVideoUrl).forEach { if (!directMp4.contains(it)) directMp4.add(it) }
             watchDoc.select("a[href], button[data-ajax], .servers a, .server a, li.server, div.server-item, ul.servers-list li, .tabs--servers a, ul.nav-tabs a[data-server], .bib-player-server, .servers-tab, a.server-switch, button.server").forEach { el ->
@@ -548,6 +586,7 @@ class QFilm : MainAPI() {
                 val playHtml = playResp.text
                 collectEmbedsFromDoc(playDoc, embeds, lowerPriorityEmbeds)
                 val (pm, pp) = scanInlinePlayerJs(playHtml)
+                collectTargetsFromRawMarkup(playHtml, embeds, directM3u8, directMp4)
                 pm.filter(::validateVideoUrl).forEach { if (!directM3u8.contains(it)) directM3u8.add(it) }
                 pp.filter(::validateVideoUrl).forEach { if (!directMp4.contains(it)) directMp4.add(it) }
                 playDoc.select("a[href], button[data-ajax], .servers a, li.server, div.server-item, ul.servers-list li, .bib-player-server, a.server-switch").forEach { el ->
@@ -646,6 +685,11 @@ class QFilm : MainAPI() {
         if (!vid.isNullOrBlank() && playUrl != watchUrl) {
             Log.w(logTag, "Watch URL WebView failed, trying play.php WebView: $playUrl")
             if (tryWebViewResolve(playUrl, watchUrl, ua, callback)) return true
+        }
+
+        for (embed in ordered.take(4)) {
+            Log.w(logTag, "Direct embed WebView fallback: $embed")
+            if (tryWebViewResolve(embed, watchUrl, ua, callback)) return true
         }
 
         Log.e(logTag, "All stages failed for: $data")
