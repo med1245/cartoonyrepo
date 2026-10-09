@@ -267,15 +267,79 @@ class QFilm : MainAPI() {
         return null
     }
 
+    private fun isTrackedAsset(u: String): Boolean {
+        val l = u.lowercase()
+        return l.contains("agl.") || l.contains("xbeat.space") || l.contains("histats") ||
+                l.contains("dtscdn.") || l.contains("dtscout.") || l.contains("onaudience.") ||
+                l.contains("mrktmtrcs.") || l.contains("cloudflareinsights") ||
+                l.contains("googletagmanager") || l.contains("google-analytics") ||
+                l.contains("facebook") || l.contains("googlesyndication")
+    }
+
+    private fun scanInlinePlayerJs(html: String): Pair<List<String>, List<String>> {
+        val m3u8s = linkedSetOf<String>()
+        val mp4s = linkedSetOf<String>()
+        val cleaned = html.replace("\\/", "/").replace("&quot;", "\"").replace("&#039;", "'")
+
+        Regex("""https?://[^\s"'\\<>]+\.m3u8(?:\?[^\s"'\\<>]*)?""").findAll(cleaned).forEach { m ->
+            if (!isTrackedAsset(m.value)) m3u8s.add(m.value)
+        }
+        Regex("""https?://[^\s"'\\<>]+?\.mp4(?:[?#][^\s"'\\<>]*)?""", RegexOption.IGNORE_CASE).findAll(cleaned).forEach { m ->
+            if (!isTrackedAsset(m.value)) mp4s.add(m.value)
+        }
+
+        Regex("""["']?(?:file|source|src|hls|manifest|stream)["']?\s*[:=]\s*["']((?:\\.|[^"'])+)["']""").findAll(cleaned).forEach { m ->
+            var v = m.groupValues[1].replace("\\/", "/")
+            if (v.isBlank() || isTrackedAsset(v)) return@forEach
+            if (v.startsWith("//")) v = "https:$v"
+            val lv = v.lowercase()
+            if (lv.contains(".m3u8") || lv.contains("/hls/")) {
+                if (v.startsWith("/")) v = mainUrl.trimEnd('/') + v
+                if (v.startsWith("http")) m3u8s.add(v)
+            } else if (lv.endsWith(".mp4") || lv.contains(".mp4?") || lv.endsWith(".webm") || lv.endsWith(".mkv")) {
+                if (v.startsWith("/")) v = mainUrl.trimEnd('/') + v
+                if (v.startsWith("http")) mp4s.add(v)
+            }
+        }
+
+        val sourcesArrayM = Regex("""sources\s*:\s*\[([\s\S]*?)\]""", RegexOption.DOT_MATCHES_ALL).find(cleaned)
+        if (sourcesArrayM != null) {
+            val inner = sourcesArrayM.groupValues[1]
+            Regex("""["']?file["']?\s*:\s*["']((?:\\.|[^"'])+)["']""").findAll(inner).forEach { m ->
+                var v = m.groupValues[1].replace("\\/", "/")
+                if (v.isBlank() || isTrackedAsset(v)) return@forEach
+                if (v.startsWith("//")) v = "https:$v"
+                val lv = v.lowercase()
+                if (lv.contains(".m3u8") || lv.contains("/hls/")) {
+                    if (v.startsWith("/")) v = mainUrl.trimEnd('/') + v
+                    if (v.startsWith("http")) m3u8s.add(v)
+                } else if (lv.contains(".mp4") || lv.endsWith(".webm")) {
+                    if (v.startsWith("/")) v = mainUrl.trimEnd('/') + v
+                    if (v.startsWith("http")) mp4s.add(v)
+                }
+            }
+            Regex("""src\s*:\s*["']((?:\\.|[^"'])+)["']""").findAll(inner).forEach { m ->
+                var v = m.groupValues[1].replace("\\/", "/")
+                if (v.isBlank() || isTrackedAsset(v)) return@forEach
+                if (v.startsWith("//")) v = "https:$v"
+                val lv = v.lowercase()
+                if (lv.contains(".m3u8") || lv.contains("/hls/")) {
+                    if (v.startsWith("/")) v = mainUrl.trimEnd('/') + v
+                    if (v.startsWith("http")) m3u8s.add(v)
+                }
+            }
+        }
+
+        return m3u8s.toList() to mp4s.toList()
+    }
+
     private fun collectEmbedsFromDoc(doc: org.jsoup.nodes.Document, sink: LinkedHashSet<String>, lowPriority: LinkedHashSet<String>) {
         doc.select("iframe[src]").forEach { iframe ->
             val src = iframe.attrOrAbs("src").ifBlank { iframe.attr("src") }
             if (src.isBlank()) return@forEach
             val l = src.lowercase()
             if (l.startsWith("blob:")) return@forEach
-            if (l.contains("agl") || l.contains("xbeat.space") || l.contains("cdn-cgi") ||
-                l.contains("histats") || l.contains("dtscdn") || l.contains("dtscout") ||
-                l.contains("onaudience") || l.contains("mrktmtrcs") || l.contains("cloudflareinsights")) {
+            if (isTrackedAsset(src)) {
                 if (!sink.contains(src)) lowPriority.add(src)
             } else {
                 if (!sink.contains(src) && !lowPriority.contains(src)) sink.add(src)
@@ -285,16 +349,107 @@ class QFilm : MainAPI() {
         val srcRegex = Regex("""src\s*=\s*["'](https?://[^"']+)["']""")
         for (m in srcRegex.findAll(html)) {
             val s = m.groupValues[1]
-            val l = s.lowercase()
-            if (l.contains("agl") || l.contains("xbeat.space") || l.contains("histats") ||
-                l.contains("dtscdn") || l.contains("dtscout") || l.contains("onaudience") ||
-                l.contains("mrktmtrcs") || l.contains("cloudflareinsights")) continue
+            if (isTrackedAsset(s)) continue
             if (sink.contains(s) || lowPriority.contains(s)) continue
             sink.add(s)
         }
-        val m3u8Regex = Regex("""https?://[^\s"'\\]+\.m3u8[^\s"'\\]*""")
-        for (m in m3u8Regex.findAll(html)) {
-            if (!sink.contains(m.value)) sink.add(m.value)
+    }
+
+    private suspend fun tryWebViewResolve(
+        targetUrl: String,
+        refererUrl: String,
+        ua: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        Log.d(logTag, "tryWebViewResolve -> $targetUrl")
+        val triggerJs = """
+            (function() {
+                var t0 = Date.now();
+                function clickAll() {
+                    ['.play-button','.btn-play','.vjs-big-play-button','.jw-icon-display','button.play','#play','a.play',
+                     '.bibplayer-play','.player-big-play','.btn.btn-play','[data-action="play"]',
+                     '.pm-video-play-icon','.pm-play','a.bibplayer-play',
+                     '.player-play','.video-play','.icon-play'].forEach(function(s){
+                        try { var e = document.querySelector(s); if(e && typeof e.click === 'function') { e.click(); } } catch(_) {}
+                    });
+                    var vs = document.querySelectorAll('video');
+                    vs.forEach(function(v){ try { v.muted = true; var p = v.play(); if (p && typeof p.catch === 'function') p.catch(function(){}); } catch(_){} });
+                }
+                clickAll();
+                setInterval(clickAll, 600);
+                setTimeout(function(){ clickAll(); }, 1200);
+                setTimeout(function(){ clickAll(); }, 2500);
+                setTimeout(function(){ clickAll(); }, 4500);
+            })();
+        """.trimIndent()
+        return try {
+            val resolver = WebViewResolver(
+                interceptUrl = Regex(""".*(\.m3u8.*|\.mp4.*|/hls/.*|/manifest/.*|master\.m3u8.*|playlist\.m3u8.*)""", RegexOption.IGNORE_CASE),
+                script = triggerJs
+            )
+            val intercepted = resolver.resolveUsingWebView(
+                requestCreator(
+                    method = "GET",
+                    url = targetUrl,
+                    referer = refererUrl,
+                    headers = mapOf(
+                        "User-Agent" to ua,
+                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                    )
+                )
+            )
+            val webUrl = intercepted.first?.url?.toString()
+            Log.d(logTag, "WebViewResolver intercepted URL: $webUrl")
+            if (!webUrl.isNullOrBlank() && (webUrl.contains(".m3u8") || webUrl.contains("/hls/") || webUrl.contains("master.m3u8") || webUrl.contains("playlist.m3u8"))) {
+                M3u8Helper.generateM3u8(
+                    this.name,
+                    webUrl,
+                    referer = refererUrl,
+                    headers = mapOf("User-Agent" to ua, "Referer" to refererUrl)
+                ).forEach(callback)
+                true
+            } else if (!webUrl.isNullOrBlank() && (webUrl.lowercase().endsWith(".mp4") || webUrl.contains(".mp4?"))) {
+                callback(
+                    ExtractorLink(
+                        this.name,
+                        "مباشر",
+                        webUrl,
+                        refererUrl,
+                        Qualities.Unknown.value,
+                        false
+                    )
+                )
+                true
+            } else {
+                Log.w(logTag, "WebViewResolver did not yield video URL. Trying catch-all regex.")
+                val catchAllResolver = WebViewResolver(
+                    interceptUrl = Regex(""".*"""),
+                    script = triggerJs
+                )
+                val catchAll = catchAllResolver.resolveUsingWebView(
+                    requestCreator(
+                        "GET", targetUrl, referer = refererUrl,
+                        headers = mapOf("User-Agent" to ua)
+                    )
+                )
+                val caUrl = catchAll.first?.url?.toString()
+                Log.d(logTag, "Catch-all intercepted: $caUrl")
+                if (!caUrl.isNullOrBlank() && (caUrl.contains(".m3u8") || caUrl.contains("/hls/"))) {
+                    M3u8Helper.generateM3u8(
+                        this.name, caUrl, referer = refererUrl,
+                        headers = mapOf("User-Agent" to ua, "Referer" to refererUrl)
+                    ).forEach(callback)
+                    true
+                } else if (!caUrl.isNullOrBlank() && (caUrl.lowercase().endsWith(".mp4") || caUrl.contains(".mp4?"))) {
+                    callback(ExtractorLink(this.name, "مباشر", caUrl, refererUrl, Qualities.Unknown.value, false))
+                    true
+                } else {
+                    false
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(logTag, "WebViewResolver failed for $targetUrl: ${e.message}")
+            false
         }
     }
 
@@ -307,37 +462,58 @@ class QFilm : MainAPI() {
         val vid = extractVid(data)
         val playUrl = if (!vid.isNullOrBlank()) "$mainUrl/play.php?vid=$vid" else data
         val watchUrl = data
-        val ua = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"
+        val ua = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
 
         val embeds = linkedSetOf<String>()
         val lowerPriorityEmbeds = linkedSetOf<String>()
         val directM3u8 = linkedSetOf<String>()
         val directMp4 = linkedSetOf<String>()
 
+        try {
+            val watchResp = app.get(watchUrl, referer = "$mainUrl/", headers = mapOf("User-Agent" to ua, "Accept" to "text/html,application/xhtml+xml"))
+            val watchDoc = watchResp.document
+            val watchHtml = watchResp.text
+            collectEmbedsFromDoc(watchDoc, embeds, lowerPriorityEmbeds)
+            val (wm, wp) = scanInlinePlayerJs(watchHtml)
+            wm.forEach { if (!directM3u8.contains(it)) directM3u8.add(it) }
+            wp.forEach { if (!directMp4.contains(it)) directMp4.add(it) }
+            watchDoc.select("a[href], button[data-ajax], .servers a, .server a, li.server, div.server-item, ul.servers-list li, .tabs--servers a, ul.nav-tabs a[data-server]").forEach { el ->
+                val href = el.attrOrAbs("href").ifBlank { el.attr("data-url") }
+                    .ifBlank { el.attr("data-src") }.ifBlank { el.attr("data-embed") }
+                if (href.isBlank() || href == "#" || href.lowercase().startsWith("javascript:")) return@forEach
+                val abs = makeAbsoluteUrl(href) ?: return@forEach
+                val lv = abs.lowercase()
+                if (isTrackedAsset(abs)) return@forEach
+                if (lv.contains(".m3u8") || lv.contains("/hls/")) {
+                    if (!directM3u8.contains(abs)) directM3u8.add(abs)
+                } else if (lv.endsWith(".mp4") || lv.contains(".mp4?")) {
+                    if (!directMp4.contains(abs)) directMp4.add(abs)
+                } else {
+                    if (!embeds.contains(abs) && !lowerPriorityEmbeds.contains(abs)) embeds.add(abs)
+                }
+            }
+            Log.d(logTag, "watch scan -> m3u8=${directM3u8.size}, mp4=${directMp4.size}, embeds=${embeds.size}")
+        } catch (e: Exception) {
+            Log.w(logTag, "watch page scan failed: ${e.message}")
+        }
+
         if (!vid.isNullOrBlank()) {
             try {
-                val playDoc = app.get(
+                val playResp = app.get(
                     playUrl,
                     referer = watchUrl,
-                    headers = mapOf("User-Agent" to ua)
-                ).document
+                    headers = mapOf("User-Agent" to ua, "Accept" to "text/html,application/xhtml+xml")
+                )
+                val playDoc = playResp.document
+                val playHtml = playResp.text
                 collectEmbedsFromDoc(playDoc, embeds, lowerPriorityEmbeds)
-                val playHtml = playDoc.outerHtml()
-                Regex("""https?://[^\s"'\\]+\.m3u8[^\s"'\\]*""").findAll(playHtml).forEach { directM3u8.add(it.value) }
-                Regex("""https?://[^\s"'\\]+?\.mp4(?:[?#][^\s"'\\]*)?""").findAll(playHtml).forEach { directMp4.add(it.value) }
+                val (pm, pp) = scanInlinePlayerJs(playHtml)
+                pm.forEach { if (!directM3u8.contains(it)) directM3u8.add(it) }
+                pp.forEach { if (!directMp4.contains(it)) directMp4.add(it) }
+                Log.d(logTag, "play.php scan -> m3u8=$pm mp4=$pp embeds addtl=${embeds.size - (embeds.size)}")
             } catch (e: Exception) {
                 Log.w(logTag, "play.php fetch failed: ${e.message}")
             }
-        }
-
-        try {
-            val watchDoc = app.get(watchUrl, referer = "$mainUrl/").document
-            collectEmbedsFromDoc(watchDoc, embeds, lowerPriorityEmbeds)
-            val watchHtml = watchDoc.outerHtml()
-            Regex("""https?://[^\s"'\\]+\.m3u8[^\s"'\\]*""").findAll(watchHtml).forEach { if (!directM3u8.contains(it.value)) directM3u8.add(it.value) }
-            Regex("""https?://[^\s"'\\]+?\.mp4(?:[?#][^\s"'\\]*)?""").findAll(watchHtml).forEach { if (!directMp4.contains(it.value)) directMp4.add(it.value) }
-        } catch (e: Exception) {
-            Log.w(logTag, "watch page iframe scan failed: ${e.message}")
         }
 
         var found = false
@@ -346,8 +522,8 @@ class QFilm : MainAPI() {
                 M3u8Helper.generateM3u8(
                     this.name,
                     link,
-                    referer = playUrl,
-                    headers = mapOf("User-Agent" to ua)
+                    referer = watchUrl,
+                    headers = mapOf("User-Agent" to ua, "Referer" to watchUrl)
                 ).forEach(callback)
                 found = true
             } catch (e: Exception) { Log.w(logTag, "m3u8 failed ($link): ${e.message}") }
@@ -359,7 +535,7 @@ class QFilm : MainAPI() {
                         this.name,
                         "مباشر",
                         link,
-                        playUrl,
+                        watchUrl,
                         Qualities.Unknown.value,
                         false
                     )
@@ -374,22 +550,19 @@ class QFilm : MainAPI() {
                 val l = embed.lowercase()
                 val isHls = l.contains(".m3u8") || l.contains("/hls/")
                 val isMp4 = l.endsWith(".mp4") || l.contains(".mp4?")
-                if (isHls || isMp4) {
-                    if (directM3u8.contains(embed) || directMp4.contains(embed)) continue
-                    callback(
-                        ExtractorLink(
-                            this.name,
-                            "مباشر",
-                            embed,
-                            playUrl,
-                            Qualities.Unknown.value,
-                            isHls
-                        )
-                    )
+                if (isHls) {
+                    if (directM3u8.contains(embed)) continue
+                    M3u8Helper.generateM3u8(this.name, embed, referer = watchUrl, headers = mapOf("User-Agent" to ua)).forEach(callback)
                     found = true
                     continue
                 }
-                if (loadExtractor(embed, referer = playUrl, subtitleCallback, callback)) {
+                if (isMp4) {
+                    if (directMp4.contains(embed)) continue
+                    callback(ExtractorLink(this.name, "مباشر", embed, watchUrl, Qualities.Unknown.value, false))
+                    found = true
+                    continue
+                }
+                if (loadExtractor(embed, referer = watchUrl, subtitleCallback, callback)) {
                     found = true
                 }
             } catch (e: Exception) {
@@ -399,52 +572,15 @@ class QFilm : MainAPI() {
 
         if (found) return true
 
-        Log.w(logTag, "HTTP stages empty, trying WebViewResolver for $playUrl")
-        return try {
-            val triggerJs = """
-                (function() {
-                    ['.play-button','.btn-play','.vjs-big-play-button','.jw-icon-display','button.play','#play','a.play'].forEach(function(s){
-                        try { var e = document.querySelector(s); if(e && typeof e.click === 'function') e.click(); } catch(_) {}
-                    });
-                    var players = document.querySelectorAll('video, iframe');
-                    players.forEach(function(p){ try { if(p.play) p.play(); } catch(_){} });
-                })();
-            """.trimIndent()
-            val resolver = WebViewResolver(
-                interceptUrl = Regex(""".*"""),
-                script = triggerJs
-            )
-            val intercepted = resolver.resolveUsingWebView(
-                requestCreator("GET", playUrl, referer = playUrl, headers = mapOf("User-Agent" to ua))
-            )
-            val webUrl = intercepted.first?.url?.toString()
-            if (!webUrl.isNullOrBlank() && (webUrl.contains(".m3u8") || webUrl.contains("/hls/"))) {
-                M3u8Helper.generateM3u8(
-                    this.name,
-                    webUrl,
-                    referer = playUrl,
-                    headers = mapOf("User-Agent" to ua)
-                ).forEach(callback)
-                true
-            } else if (!webUrl.isNullOrBlank() && (webUrl.endsWith(".mp4") || webUrl.contains(".mp4?"))) {
-                callback(
-                    ExtractorLink(
-                        this.name,
-                        "مباشر",
-                        webUrl,
-                        playUrl,
-                        Qualities.Unknown.value,
-                        false
-                    )
-                )
-                true
-            } else {
-                Log.e(logTag, "WebViewResolver did not produce valid video URL, got: $webUrl")
-                false
-            }
-        } catch (e: Exception) {
-            Log.e(logTag, "WebViewResolver failed: ${e.message}", e)
-            false
+        Log.w(logTag, "HTTP stages empty, falling back to WebViewResolver (watchUrl first)")
+        if (tryWebViewResolve(watchUrl, watchUrl, ua, callback)) return true
+
+        if (!vid.isNullOrBlank() && playUrl != watchUrl) {
+            Log.w(logTag, "Watch URL WebView failed, trying play.php WebView: $playUrl")
+            if (tryWebViewResolve(playUrl, watchUrl, ua, callback)) return true
         }
+
+        Log.e(logTag, "All stages failed for: $data")
+        return false
     }
 }

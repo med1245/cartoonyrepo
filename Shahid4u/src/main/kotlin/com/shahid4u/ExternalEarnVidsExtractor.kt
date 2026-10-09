@@ -7,7 +7,6 @@ import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import org.json.JSONObject
 import java.net.URI
@@ -46,7 +45,7 @@ open class ExternalEarnVidsExtractor : ExtractorApi() {
             headers["Referer"] = safeReferer
             Log.d(name, "Encoded Referer used: $safeReferer")
             val response = app.get(url, headers = headers)
-            val html = response.text ?: ""
+            val html = response.text
             val finalResolvedUrl = response.url
             Log.d(name, "Fetched page length=${html.length} for $url")
             val quick = findStreamUrl(html, url)
@@ -169,7 +168,7 @@ open class ExternalEarnVidsExtractor : ExtractorApi() {
         }
     }
 
-    private suspend fun emitStream(link: String, referer: String, callback: (ExtractorLink) -> Unit) {
+    private fun emitStream(link: String, referer: String, callback: (ExtractorLink) -> Unit) {
         val finalLink = link.replace("\\/", "/")
         val lower = finalLink.lowercase()
         val isM3u8 = lower.contains(".m3u8") || lower.contains("/hls/")

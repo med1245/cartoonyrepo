@@ -16,7 +16,7 @@ import java.net.URI
 import java.net.URLEncoder
 
 class Shahid4u : MainAPI() {
-    override var mainUrl = "https://shaheid4u.name"
+    override var mainUrl = "https://shaheid4u.name/"
     override var name = "Shahid4u"
     override val hasMainPage = true
     override var lang = "ar"
@@ -33,7 +33,6 @@ class Shahid4u : MainAPI() {
 
     private val cloudflareKiller by lazy { CloudflareKiller() }
     private val cfInterceptor: Interceptor get() = cloudflareKiller
-
     private fun encodeUri(url: String): String {
         return try {
             url.toCharArray().joinToString("") { char ->
@@ -103,7 +102,7 @@ class Shahid4u : MainAPI() {
             p.startsWith("//") -> "https:$p"
             p.startsWith("/") -> mainUrl.trimEnd('/') + p
             else -> {
-                mainUrl + p
+                mainUrl.trimEnd('/') + "/" + p.trimStart('/')
             }
         }
     }
@@ -129,14 +128,16 @@ class Shahid4u : MainAPI() {
     }
 
     private fun parseCard(element: Element): SearchResponse? {
-        val linkElement = element.selectFirst("a.show-card, a.glide_post, a") ?: return null
+        val linkElement = element.selectFirst("a.show.card, a.glide_post, a")
+        if (linkElement == null) return null
 
         val href = linkElement.attr("href").ifBlank { linkElement.absUrl("href") }
+        val absHref = makeAbsoluteUrl(href) ?: href
 
-        val mainTitle = linkElement.selectFirst("p.title")?.text()?.trim()
-            ?: element.selectFirst("p.title")?.text()?.trim()
+        val mainTitle = element.selectFirst("p.title")?.text()?.trim()
+        val description = element.selectFirst("p.description")?.text()?.trim()
         val title = if (!mainTitle.isNullOrBlank()) {
-            mainTitle
+            if (!description.isNullOrBlank()) "$mainTitle - $description" else mainTitle
         } else {
             element.selectFirst("div.card-content")?.text()?.trim()
                 ?: element.selectFirst("h3")?.text()?.trim()
@@ -144,26 +145,23 @@ class Shahid4u : MainAPI() {
         }
         if (title.isNullOrBlank()) return null
 
-        var posterUrl = element.selectFirst("img")?.attr("src")?.trim()
+        val posterStyle = linkElement.attr("style")
+        var posterUrl = Regex("""url\(['"]?(.*?)['"]?\)""").find(posterStyle)?.groupValues?.get(1)
         if (posterUrl.isNullOrBlank()) posterUrl = element.selectFirst("img")?.attr("data-src")?.trim()
-        if (posterUrl.isNullOrBlank()) {
-            val posterStyle = linkElement.attr("style")
-            posterUrl = Regex("""url\(['"]?(.*?)['"]?\)""").find(posterStyle)?.groupValues?.get(1)
-        }
+        if (posterUrl.isNullOrBlank()) posterUrl = element.selectFirst("img")?.attr("src")?.trim()
         posterUrl = makeAbsoluteUrl(posterUrl) ?: TRANSPARENT_PNG_DATA_URI
 
         val isTvSeries =
-            linkElement.selectFirst(".ep, .ep_num, .الحلقة") != null ||
-            href.contains("/episode/") ||
-            element.select(".ep").isNotEmpty()
+            element.selectFirst(".ep_num, .الحلقة, .ep") != null || absHref.contains("/episode/") ||
+                    href.contains("/episode/") || element.select(".ep").isNotEmpty()
 
         return if (isTvSeries) {
-            newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+            newTvSeriesSearchResponse(title, absHref, TvType.TvSeries) {
                 this.posterUrl = posterUrl
                 this.posterHeaders = posterheader()
             }
         } else {
-            newMovieSearchResponse(title, href, TvType.Movie) {
+            newMovieSearchResponse(title, absHref, TvType.Movie) {
                 this.posterUrl = posterUrl
                 this.posterHeaders = posterheader()
             }
@@ -175,7 +173,7 @@ class Shahid4u : MainAPI() {
             val categoryUrl = "${request.data}?page=$page"
             val document = httpGet(categoryUrl, referer = mainUrl)
             val items = document.select("div.shows-container.row div[class*=col-]").mapNotNull { col ->
-                col.selectFirst("a.show-card")?.let { parseCard(it) } ?: parseCard(col)
+                col.selectFirst("a.show.card")?.let { parseCard(it) } ?: parseCard(col)
             }
             val hasNext =
                 document.selectFirst("ul.pagination li.page-item.active + li.page-item a") != null
@@ -190,7 +188,7 @@ class Shahid4u : MainAPI() {
         try {
             val sliderItems =
                 document.select("div.glide li.glide__slide:not(.glide__slide--clone)").mapNotNull { slide ->
-                    slide.selectFirst("a.show-card")?.let { parseCard(it) } ?: parseCard(slide)
+                    slide.selectFirst("a.show.card")?.let { parseCard(it) } ?: parseCard(slide)
                 }
             if (sliderItems.isNotEmpty()) {
                 homePageList.add(HomePageList("أبرز العروض", sliderItems))
@@ -200,14 +198,14 @@ class Shahid4u : MainAPI() {
         }
 
         val categories = listOf(
-            "افلام اجنبي" to "${mainUrl}/category/افلام-اجنبي",
-            "افلام عربي" to "${mainUrl}/category/افلام-عربي",
-            "افلام هندي" to "${mainUrl}/category/افلام-هندي",
-            "افلام انمي" to "${mainUrl}/category/افلام-انمي",
-            "مسلسلات أجنبي" to "${mainUrl}/category/مسلسلات-اجنبي",
-            "مسلسلات عربي" to "${mainUrl}/category/مسلسلات-عربي",
-            "مسلسلات تركية" to "${mainUrl}/category/مسلسلات-تركية",
-            "مسلسلات انمي" to "${mainUrl}/category/مسلسلات-انمي",
+            "افلام اجنبي" to "${mainUrl}category/افلام-اجنبي",
+            "افلام عربي" to "${mainUrl}category/افلام-عربي",
+            "افلام هندي" to "${mainUrl}category/افلام-هندي",
+            "افلام انمي" to "${mainUrl}category/افلام-انمي",
+            "مسلسلات أجنبي" to "${mainUrl}category/مسلسلات-اجنبي",
+            "مسلسلات عربي" to "${mainUrl}category/مسلسلات-عربي",
+            "مسلسلات تركية" to "${mainUrl}category/مسلسلات-تركية",
+            "مسلسلات انمي" to "${mainUrl}category/مسلسلات-انمي",
         )
 
         for ((title, url) in categories) {
@@ -215,7 +213,7 @@ class Shahid4u : MainAPI() {
                 val doc = httpGet(url, referer = mainUrl)
                 val items =
                     doc.select("div.shows-container.row div[class*=col-]").take(40).mapNotNull { col ->
-                        col.selectFirst("a.show-card")?.let { parseCard(it) } ?: parseCard(col)
+                        col.selectFirst("a.show.card")?.let { parseCard(it) } ?: parseCard(col)
                     }
                 if (items.isNotEmpty()) homePageList.add(HomePageList(title, items, true))
             } catch (e: Exception) {
@@ -228,7 +226,7 @@ class Shahid4u : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val encoded = URLEncoder.encode(query, "UTF-8")
-        val searchUrl = "${mainUrl}/search?s=$encoded"
+        val searchUrl = "${mainUrl}search?s=$encoded"
 
         return try {
             val document = httpGet(searchUrl, referer = mainUrl)
@@ -238,7 +236,7 @@ class Shahid4u : MainAPI() {
 
             resultItems.mapIndexedNotNull { _, element ->
                 try {
-                    element.selectFirst("a.show-card")?.let { parseCard(it) } ?: parseCard(element)
+                    element.selectFirst("a.show.card")?.let { parseCard(it) } ?: parseCard(element)
                 } catch (e: Exception) {
                     null
                 }
@@ -251,7 +249,7 @@ class Shahid4u : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         val document = httpGet(url)
 
-        val title = document.selectFirst("span.title, h1.title, h1, .poster-side h1, .movie-title, h2.title, h2")?.text()?.trim()
+        val title = document.selectFirst("span.title, h1.title")?.text()?.trim()
             ?: document.selectFirst("meta[property='og:title']")?.attr("content")
                 ?.replace("- Shahid4u", "", ignoreCase = true)
                 ?.replace("- شاهد فور يو", "", ignoreCase = true)?.trim()
@@ -260,15 +258,12 @@ class Shahid4u : MainAPI() {
                 ?.replace("- شاهد فور يو", "", ignoreCase = true)?.trim()
             ?: "غير متوفر"
 
+        val posterStyle = document.selectFirst("div.poster-side div.poster, div.poster")?.attr("style").orEmpty()
         val posterRaw = document.selectFirst("div.poster-side img")?.attr("src")
             ?: document.selectFirst("div.poster img")?.attr("src")
-            ?: document.selectFirst("img[alt*=poster], img.poster")?.attr("src")
-            ?: run {
-                val posterStyle = document.selectFirst("div.poster-side div.poster, div.poster")?.attr("style").orEmpty()
-                Regex("""--background-image-url:\s*url\(['"]?(.*?)['"]?\)""")
-                    .find(posterStyle)?.groupValues?.get(1)
-                    ?: Regex("""url\(['"]?(.*?)['"]?\)""").find(posterStyle)?.groupValues?.get(1)
-            }
+            ?: Regex("""--background-image-url:\s*url\(['"]?(.*?)['"]?\)""")
+                .find(posterStyle)?.groupValues?.get(1)
+            ?: Regex("""url\(['"]?(.*?)['"]?\)""").find(posterStyle)?.groupValues?.get(1)
             ?: document.selectFirst("meta[property='og:image']")?.attr("content")
             ?: document.selectFirst("meta[name='twitter:image']")?.attr("content")
         val poster = makeAbsoluteUrl(posterRaw)
@@ -360,7 +355,8 @@ class Shahid4u : MainAPI() {
             embedUrls.addAll(parseEmbedUrls(htmlContent))
             watchDoc.select("iframe[src]").forEach { iframe ->
                 val src = iframe.absUrl("src").ifBlank { iframe.attr("src") }
-                if (src.isNotBlank()) embedUrls.add(src)
+                val absSrc = makeAbsoluteUrl(src)
+                if (!absSrc.isNullOrBlank()) embedUrls.add(absSrc)
             }
         } catch (e: Exception) {
             Log.e(logTag, "loadLinks -> failed to fetch watch page $watchUrl: ${e.message}")
@@ -523,7 +519,8 @@ class Shahid4u : MainAPI() {
                 val page = httpGet(target, referer = watchUrl)
                 val iframe = page.selectFirst("iframe[src]")
                 if (iframe != null) {
-                    val src = iframe.absUrl("src").ifBlank { makeAbsoluteUrl(iframe.attr("src")) }
+                    val srcRaw = iframe.absUrl("src").ifBlank { iframe.attr("src") }
+                    val src = makeAbsoluteUrl(srcRaw)
                     if (!src.isNullOrBlank()) {
                         return@runCatching resolveEmbedUrl(src, watchUrl, subtitleCallback, callback)
                     }
